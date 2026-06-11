@@ -1,7 +1,12 @@
 import { defineStore } from "pinia";
+import { listen } from "@tauri-apps/api/event";
 import { api, type FileDiff, type FileStatus, type Hunk, type RepoInfo } from "../lib/api";
 import { toast } from "../lib/toast";
 import { useSettingsStore } from "./settings";
+
+let watcherHooked = false;
+// our own refreshes touch .git/index and would echo back as watcher events
+let suppressAutoRefreshUntil = 0;
 
 export const useRepoStore = defineStore("repo", {
   state: () => ({
@@ -26,6 +31,15 @@ export const useRepoStore = defineStore("repo", {
         this.diff = null;
         await useSettingsStore().addRecent(info.root);
         await this.refresh();
+        await api.watchRepo(info.root);
+        if (!watcherHooked) {
+          watcherHooked = true;
+          await listen<string>("repo-changed", (e) => {
+            if (!this.repo || e.payload !== this.repo.root) return;
+            if (this.loadingStatus || Date.now() < suppressAutoRefreshUntil) return;
+            this.refresh();
+          });
+        }
       } catch (e) {
         toast(String(e), "error");
       }
@@ -50,6 +64,7 @@ export const useRepoStore = defineStore("repo", {
         toast(String(e), "error");
       } finally {
         this.loadingStatus = false;
+        suppressAutoRefreshUntil = Date.now() + 800;
       }
     },
     async selectFile(f: FileStatus) {

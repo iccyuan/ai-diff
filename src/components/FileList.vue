@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { confirmDialog } from "../lib/confirm";
 import type { FileStatus } from "../lib/api";
@@ -13,6 +14,80 @@ const BADGE: Record<string, string> = {
   untracked: "U",
 };
 
+interface DirRow {
+  type: "dir";
+  path: string;
+  label: string;
+  depth: number;
+  collapsed: boolean;
+}
+interface FileRow {
+  type: "file";
+  file: FileStatus;
+  name: string;
+  depth: number;
+}
+type Row = DirRow | FileRow;
+
+const collapsed = ref(new Set<string>());
+
+interface Node {
+  dirs: Map<string, Node>;
+  files: FileStatus[];
+}
+
+const rows = computed<Row[]>(() => {
+  const root: Node = { dirs: new Map(), files: [] };
+  for (const f of repo.files) {
+    const parts = f.path.split("/");
+    let n = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      let child = n.dirs.get(parts[i]);
+      if (!child) {
+        child = { dirs: new Map(), files: [] };
+        n.dirs.set(parts[i], child);
+      }
+      n = child;
+    }
+    n.files.push(f);
+  }
+
+  const out: Row[] = [];
+  const walk = (n: Node, prefix: string, depth: number) => {
+    for (const name of [...n.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
+      let label = name;
+      let path = prefix ? `${prefix}/${name}` : name;
+      let child = n.dirs.get(name)!;
+      // compact chains of single-child dirs without files (src/components/ style)
+      while (child.files.length === 0 && child.dirs.size === 1) {
+        const only = [...child.dirs.keys()][0];
+        label += "/" + only;
+        path += "/" + only;
+        child = child.dirs.get(only)!;
+      }
+      const isCollapsed = collapsed.value.has(path);
+      out.push({ type: "dir", path, label, depth, collapsed: isCollapsed });
+      if (!isCollapsed) walk(child, path, depth + 1);
+    }
+    for (const f of [...n.files].sort((a, b) => a.path.localeCompare(b.path))) {
+      out.push({ type: "file", file: f, name: f.path.split("/").pop()!, depth });
+    }
+  };
+  walk(root, "", 0);
+  return out;
+});
+
+function toggleDir(path: string) {
+  const s = new Set(collapsed.value);
+  if (s.has(path)) s.delete(path);
+  else s.add(path);
+  collapsed.value = s;
+}
+
+function fileTitle(f: FileStatus): string {
+  return f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+}
+
 async function revert(f: FileStatus) {
   const msg =
     f.kind === "untracked"
@@ -24,10 +99,11 @@ async function revert(f: FileStatus) {
 }
 
 function move(delta: number) {
-  if (!repo.files.length) return;
-  const idx = repo.files.findIndex((f) => f.path === repo.selectedPath);
-  const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), repo.files.length - 1);
-  repo.selectFile(repo.files[next]);
+  const fileRows = rows.value.filter((r): r is FileRow => r.type === "file");
+  if (!fileRows.length) return;
+  const idx = fileRows.findIndex((r) => r.file.path === repo.selectedPath);
+  const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), fileRows.length - 1);
+  repo.selectFile(fileRows[next].file);
 }
 </script>
 
@@ -42,20 +118,33 @@ function move(delta: number) {
       工作区干净，没有未提交的更改
     </div>
     <ul>
-      <li
-        v-for="f in repo.files"
-        :key="f.path"
-        :class="{ active: f.path === repo.selectedPath }"
-        @click="repo.selectFile(f)"
-      >
-        <span class="badge" :class="f.kind">{{ BADGE[f.kind] }}</span>
-        <span class="path" :title="f.oldPath ? `${f.oldPath} → ${f.path}` : f.path">
-          <template v-if="f.oldPath">{{ f.oldPath }} → </template>{{ f.path }}
-        </span>
-        <button class="row-revert" :title="f.kind === 'untracked' ? '删除此文件' : '还原此文件'" @click.stop="revert(f)">
-          ⟲
-        </button>
-      </li>
+      <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.file.path">
+        <li
+          v-if="row.type === 'dir'"
+          class="dir-row"
+          :style="{ paddingLeft: 12 + row.depth * 16 + 'px' }"
+          @click="toggleDir(row.path)"
+        >
+          <span class="chevron">{{ row.collapsed ? "▸" : "▾" }}</span>
+          <span class="dir-name">{{ row.label }}</span>
+        </li>
+        <li
+          v-else
+          :class="{ active: row.file.path === repo.selectedPath }"
+          :style="{ paddingLeft: 12 + row.depth * 16 + 'px' }"
+          @click="repo.selectFile(row.file)"
+        >
+          <span class="badge" :class="row.file.kind">{{ BADGE[row.file.kind] }}</span>
+          <span class="path" :title="fileTitle(row.file)">{{ row.name }}</span>
+          <button
+            class="row-revert"
+            :title="row.file.kind === 'untracked' ? '删除此文件' : '还原此文件'"
+            @click.stop="revert(row.file)"
+          >
+            {{ row.file.kind === "untracked" ? "✕" : "↶" }}
+          </button>
+        </li>
+      </template>
     </ul>
   </aside>
 </template>

@@ -12,8 +12,9 @@ const container = ref<HTMLElement | null>(null);
 
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
 let models: monaco.editor.ITextModel[] = [];
-let widgets: monaco.editor.IContentWidget[] = [];
 let decorations: monaco.editor.IEditorDecorationsCollection | null = null;
+// glyph-margin line -> hunk, for the gutter revert icons
+const glyphHunks = new Map<number, Hunk>();
 
 const overlayText = computed(() => {
   if (!repo.repo) return "点击「打开项目」选择一个 git 仓库开始 review";
@@ -26,9 +27,7 @@ const overlayText = computed(() => {
 });
 
 function clearView() {
-  const mod = editor?.getModifiedEditor();
-  if (mod) for (const w of widgets) mod.removeContentWidget(w);
-  widgets = [];
+  glyphHunks.clear();
   decorations?.clear();
   decorations = null;
   editor?.setModel(null);
@@ -55,9 +54,16 @@ function render() {
     const mod = editor.getModifiedEditor();
     const decos: monaco.editor.IModelDeltaDecoration[] = [];
     for (const h of d.hunks) {
-      const w = makeHunkWidget(h);
-      widgets.push(w);
-      mod.addContentWidget(w);
+      // deletion-only hunks have newLines = 0 and newStart pointing before the cut
+      const line = Math.max(h.newStart, 1);
+      glyphHunks.set(line, h);
+      decos.push({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          glyphMarginClassName: "hunk-revert-glyph",
+          glyphMarginHoverMessage: { value: "还原此修改块（恢复为 HEAD 版本）" },
+        },
+      });
       if (h.newLines > 0) {
         decos.push({
           range: new monaco.Range(h.newStart, 1, h.newStart + h.newLines - 1, 1),
@@ -69,33 +75,14 @@ function render() {
   }
 }
 
-function makeHunkWidget(h: Hunk): monaco.editor.IContentWidget {
-  const node = document.createElement("div");
-  node.className = "hunk-revert";
-  const btn = document.createElement("button");
-  btn.textContent = "⟲ 还原此块";
-  btn.title = "把这个修改块还原为 HEAD 版本";
-  btn.onclick = async () => {
-    const ok = await confirmDialog(
-      "还原修改块",
-      `确定还原第 ${h.index + 1} 个修改块（第 ${Math.max(h.newStart, 1)} 行附近）吗？此操作不可撤销。`,
-    );
-    if (ok) await repo.revertHunk(h);
-  };
-  node.appendChild(btn);
-  return {
-    getId: () => `hunk-revert-${h.index}`,
-    getDomNode: () => node,
-    getPosition: () => ({
-      // deletion-only hunks have newLines = 0 and newStart pointing before the cut
-      position: { lineNumber: Math.max(h.newStart, 1), column: 1 },
-      // ABOVE keeps the button off the first changed line; falls back to EXACT at line 1
-      preference: [
-        monaco.editor.ContentWidgetPositionPreference.ABOVE,
-        monaco.editor.ContentWidgetPositionPreference.EXACT,
-      ],
-    }),
-  };
+async function onRevertGlyphClick(line: number) {
+  const h = glyphHunks.get(line);
+  if (!h) return;
+  const ok = await confirmDialog(
+    "还原修改块",
+    `确定还原第 ${h.index + 1} 个修改块（第 ${Math.max(h.newStart, 1)} 行附近）吗？此操作不可撤销。`,
+  );
+  if (ok) await repo.revertHunk(h);
 }
 
 onMounted(() => {
@@ -108,6 +95,20 @@ onMounted(() => {
     diffAlgorithm: "advanced",
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
+    renderOverviewRuler: false,
+    scrollbar: {
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+      useShadows: false,
+    },
+  });
+  // gutter revert icons live in the modified editor's glyph margin
+  const mod = editor.getModifiedEditor();
+  mod.updateOptions({ glyphMargin: true });
+  mod.onMouseDown((e) => {
+    if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+    const line = e.target.position?.lineNumber;
+    if (line) onRevertGlyphClick(line);
   });
   render();
 });

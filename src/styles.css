@@ -30,6 +30,29 @@
   box-sizing: border-box;
 }
 
+/* slim, theme-aware scrollbars for the app chrome (file list, modals) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 html,
 body,
 #app {
@@ -198,10 +221,27 @@ input[type="checkbox"] {
 .file-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
+  gap: 6px;
+  padding: 4px 12px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.file-list .dir-row {
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.file-list .dir-row .chevron {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+}
+
+.file-list .dir-row .dir-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .file-list li:hover {
@@ -216,8 +256,6 @@ input[type="checkbox"] {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl; /* keep the filename end visible when truncated */
-  text-align: left;
 }
 
 .badge {
@@ -296,27 +334,22 @@ input[type="checkbox"] {
   text-align: center;
 }
 
-/* hunk revert widget injected into Monaco */
-.hunk-revert {
-  z-index: 10;
-}
-
-.hunk-revert button {
-  white-space: nowrap;
-  background: var(--bg-panel);
-  color: var(--accent);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 11px;
-  padding: 1px 6px;
+/* git-native style revert arrow in the modified editor's glyph margin */
+.hunk-revert-glyph {
   cursor: pointer;
-  opacity: 0.85;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-.hunk-revert button:hover {
-  opacity: 1;
-  border-color: var(--accent);
+.hunk-revert-glyph::before {
+  content: "↶";
+  display: block;
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.hunk-revert-glyph:hover::before {
+  color: var(--accent);
 }
 
 .hunk-range-marker {

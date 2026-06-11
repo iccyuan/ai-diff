@@ -42,4 +42,5 @@ export const api = {
   revertHunk: (repo: string, path: string, patch: string) =>
     invoke<void>("revert_hunk", { repo, path, patch }),
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
+  watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
 };

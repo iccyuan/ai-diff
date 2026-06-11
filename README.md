@@ -9,17 +9,22 @@ diff，并支持整体还原 / 单文件还原 / 单个修改块（hunk）还原
 
 ## 功能
 
-- 打开本地 git 仓库，列出更改文件：修改 (M) / 新增 (A) / 删除 (D) /
-  重命名 (R，显示 old → new) / 未跟踪 (U)
+- 打开本地 git 仓库，更改文件按**目录树**展示（可折叠，单子目录链自动
+  合并成 `src/components/` 形式），徽标：修改 (M) / 新增 (A) / 删除 (D) /
+  重命名 (R) / 未跟踪 (U)
+- **自动检测更改**：Rust 侧 notify 文件监听（400ms 防抖，过滤 .git 内部
+  噪音），外部改动自动刷新；工具栏的手动刷新按钮作为兜底
 - Monaco 双栏（或单栏 inline）diff：语法高亮（按 Monaco 扩展名注册表自动
   识别主流语言）、词级差异、未变区折叠
 - 还原：
+  - hunk 还原走 git 原生交互——修改块旁的 **gutter ↶ 箭头图标**（VS Code
+    风格），点击确认后反向 patch 经 stdin 交给 `git apply -R`；每次还原后
+    全量刷新，hunk 偏移永远基于当前文件状态
+  - 还原单个文件（文件行上 ↶；未跟踪文件为 ✕ 删除），按文件类型分别走
+    restore / rm --cached / 删除
   - 还原全部 = `git reset --hard HEAD` + `git clean -fd`（不带 `-x`，
     .gitignore 命中的文件不受影响）
-  - 还原单个文件（按文件类型分别走 restore / rm --cached / 删除）
-  - 还原单个 hunk = 反向 patch 经 stdin 交给 `git apply -R`；每次还原后
-    全量刷新，hunk 偏移永远基于当前文件状态
-  - 所有还原操作先弹确认框；未跟踪文件的"还原"即删除
+  - 所有还原操作先弹确认框
 - 10 套代码主题（VS / GitHub / Monokai / Solarized / Dracula / Nord 等
   浅深色），应用外壳颜色随主题联动；主题与最近打开仓库持久化
 - 比较语义固定为 **HEAD vs 工作树**：AI 代理是否 stage 过都能看全
@@ -62,6 +67,7 @@ src/                    Vue 3 前端
   stores/settings.ts    主题/布局/最近仓库（tauri-plugin-store 持久化）
   components/DiffView.vue   Monaco DiffEditor 生命周期 + hunk 还原按钮注入
 src-tauri/src/git.rs    全部 git 逻辑：六个 tauri command + 解析器 + 测试
+src-tauri/src/watcher.rs  notify 文件监听 + 防抖，emit "repo-changed" 事件
 ```
 
 ## 设计要点 / 已知行为
