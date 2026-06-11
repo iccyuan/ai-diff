@@ -1,0 +1,76 @@
+# ai-diff
+
+跨平台 Git 工作树更改查看器，专为 review AI 编码代理产生的改动而做。
+打开一个 git 仓库即可看到所有未提交更改（HEAD vs 工作树），逐文件查看
+diff，并支持整体还原 / 单文件还原 / 单个修改块（hunk）还原。
+
+技术栈：Tauri 2 + Vue 3 + TypeScript + Monaco Diff Editor，Rust 后端直接
+调用系统 `git` CLI。
+
+## 功能
+
+- 打开本地 git 仓库，列出更改文件：修改 (M) / 新增 (A) / 删除 (D) /
+  重命名 (R，显示 old → new) / 未跟踪 (U)
+- Monaco 双栏（或单栏 inline）diff：语法高亮（按 Monaco 扩展名注册表自动
+  识别主流语言）、词级差异、未变区折叠
+- 还原：
+  - 还原全部 = `git reset --hard HEAD` + `git clean -fd`（不带 `-x`，
+    .gitignore 命中的文件不受影响）
+  - 还原单个文件（按文件类型分别走 restore / rm --cached / 删除）
+  - 还原单个 hunk = 反向 patch 经 stdin 交给 `git apply -R`；每次还原后
+    全量刷新，hunk 偏移永远基于当前文件状态
+  - 所有还原操作先弹确认框；未跟踪文件的"还原"即删除
+- 10 套代码主题（VS / GitHub / Monokai / Solarized / Dracula / Nord 等
+  浅深色），应用外壳颜色随主题联动；主题与最近打开仓库持久化
+- 比较语义固定为 **HEAD vs 工作树**：AI 代理是否 stage 过都能看全
+
+## 开发
+
+前置：Node ≥ 20、Rust（stable，Windows 用 MSVC 工具链）、git ≥ 2.23。
+
+- Linux 另需：`libwebkit2gtk-4.1-dev build-essential libssl-dev`
+  `libayatana-appindicator3-dev librsvg2-dev`
+- macOS 另需：Xcode Command Line Tools
+- Windows：VS C++ Build Tools + Windows SDK（WebView2 Win11 自带）
+
+```bash
+npm install
+npm run tauri dev          # 开发运行
+npm run tauri build        # 打包安装包（产物在 src-tauri/target/release/bundle/）
+```
+
+开发调试技巧：`VITE_OPEN_REPO=<仓库路径> npm run tauri dev` 启动后自动打开
+指定仓库（仅 dev 构建生效）。
+
+## 测试
+
+Rust 后端带完整测试（diff/status 解析器单测 + 真实临时仓库集成测试，
+覆盖全部还原路径、hunk 偏移漂移、autocrlf=false/true/input 三种行尾配置、
+空仓库、ignored 文件保护）：
+
+```bash
+cd src-tauri && cargo test
+```
+
+## 结构
+
+```
+src/                    Vue 3 前端
+  monaco/setup.ts       Monaco worker、主题注册、扩展名→语言映射
+  monaco/themes/        主题 JSON（vendored from monaco-themes, MIT）
+  stores/repo.ts        仓库状态；"每次还原后必 refresh" 的一致性规则在这里
+  stores/settings.ts    主题/布局/最近仓库（tauri-plugin-store 持久化）
+  components/DiffView.vue   Monaco DiffEditor 生命周期 + hunk 还原按钮注入
+src-tauri/src/git.rs    全部 git 逻辑：六个 tauri command + 解析器 + 测试
+```
+
+## 设计要点 / 已知行为
+
+- git 调用永不经过 shell（参数向量 + `--` 分隔 + `-z` 输出），Windows 下
+  带 `CREATE_NO_WINDOW`，无黑窗闪烁
+- 非 UTF-8 文件按二进制处理（不显示文本 diff，仍可文件级还原）；
+  单侧 > 5MB 不渲染 diff
+- hunk 还原后若文件已与 HEAD 一致，会执行 `git checkout HEAD -- <file>`
+  重写该文件：恢复 autocrlf 对应的本机行尾，并刷新索引里的行尾转换状态
+  （否则 `git status` 会出现内容一致却报 M 的幻影条目）
+- 空仓库（无提交）可打开：全部显示为新增/未跟踪，「还原全部」禁用

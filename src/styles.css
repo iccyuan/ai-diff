@@ -1,0 +1,413 @@
+/* app chrome follows the Monaco theme via [data-theme] set in applyTheme() */
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --bg-panel: #ffffff;
+  --bg-hover: #eceef1;
+  --bg-active: #dde3ea;
+  --fg: #1f2328;
+  --fg-muted: #656d76;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --danger: #cf222e;
+  --ok: #1a7f37;
+}
+
+:root[data-theme="dark"],
+:root {
+  --bg: #1e1e1e;
+  --bg-panel: #252526;
+  --bg-hover: #2a2d2e;
+  --bg-active: #37373d;
+  --fg: #cccccc;
+  --fg-muted: #8b949e;
+  --border: #3c3c3c;
+  --accent: #4daafc;
+  --danger: #f85149;
+  --ok: #3fb950;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- toolbar ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+.repo-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  min-width: 0;
+}
+
+.repo-name {
+  font-weight: 600;
+}
+
+.branch {
+  color: var(--fg-muted);
+}
+
+.branch.warn {
+  color: var(--danger);
+}
+
+.recent {
+  max-width: 220px;
+}
+
+/* ---------- buttons / inputs ---------- */
+.btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+  background: var(--accent);
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+}
+
+select,
+input[type="checkbox"] {
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+/* ---------- layout ---------- */
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------- file list ---------- */
+.file-list {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  outline: none;
+  overflow: hidden;
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  flex: none;
+}
+
+.list-header .count {
+  background: var(--bg-active);
+  border-radius: 9px;
+  padding: 0 8px;
+  font-weight: 400;
+}
+
+.muted {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.list-empty {
+  padding: 16px 12px;
+  color: var(--fg-muted);
+}
+
+.file-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.file-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-list li:hover {
+  background: var(--bg-hover);
+}
+
+.file-list li.active {
+  background: var(--bg-active);
+}
+
+.file-list .path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the filename end visible when truncated */
+  text-align: left;
+}
+
+.badge {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  text-align: center;
+  line-height: 18px;
+  font-weight: 700;
+  font-size: 11px;
+  color: #fff;
+}
+
+.badge.modified {
+  background: #d29922;
+}
+
+.badge.added {
+  background: #2da44e;
+}
+
+.badge.deleted {
+  background: #cf222e;
+}
+
+.badge.renamed {
+  background: #8250df;
+}
+
+.badge.untracked {
+  background: #57606a;
+}
+
+.row-revert {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  visibility: hidden;
+}
+
+.file-list li:hover .row-revert {
+  visibility: visible;
+}
+
+.row-revert:hover {
+  color: var(--danger);
+}
+
+/* ---------- diff pane ---------- */
+.diff-pane {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+}
+
+.diff-pane .editor {
+  position: absolute;
+  inset: 0;
+}
+
+.diff-pane .overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  background: var(--bg);
+  font-size: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* hunk revert widget injected into Monaco */
+.hunk-revert {
+  z-index: 10;
+}
+
+.hunk-revert button {
+  white-space: nowrap;
+  background: var(--bg-panel);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+  opacity: 0.85;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.hunk-revert button:hover {
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.hunk-range-marker {
+  border-left: 3px solid var(--accent);
+  margin-left: 3px;
+}
+
+/* ---------- modal ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--bg-panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  width: 420px;
+  max-width: 90vw;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+
+.modal h3 {
+  margin: 0 0 12px;
+}
+
+.modal p {
+  margin: 0 0 16px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.modal .field.row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- toast ---------- */
+.toast-host {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 200;
+}
+
+.toast {
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--ok);
+  color: var(--fg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  max-width: 420px;
+  word-break: break-all;
+}
+
+.toast.error {
+  border-color: var(--danger);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: all 0.2s ease;
+}
+
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
