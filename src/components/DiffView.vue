@@ -101,6 +101,8 @@ onMounted(() => {
       horizontalScrollbarSize: 10,
       useShadows: false,
     },
+    fontFamily: settings.editorFontFamily,
+    fontSize: settings.editorFontSize,
   });
   // gutter revert icons live in the modified editor's glyph margin
   const mod = editor.getModifiedEditor();
@@ -117,6 +119,10 @@ watch(() => repo.diff, render);
 watch(
   () => settings.renderSideBySide,
   (v) => editor?.updateOptions({ renderSideBySide: v }),
+);
+watch(
+  () => [settings.editorFontFamily, settings.editorFontSize] as const,
+  ([family, size]) => editor?.updateOptions({ fontFamily: family, fontSize: size }),
 );
 
 onBeforeUnmount(() => {

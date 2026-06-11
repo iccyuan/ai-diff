@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
+import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
 import type { FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
+const settings = useSettingsStore();
+// tighter steps keep deep trees usable in a narrow sidebar
+const INDENT = 12;
 
 const BADGE: Record<string, string> = {
   modified: "M",
@@ -108,7 +112,13 @@ function move(delta: number) {
 </script>
 
 <template>
-  <aside class="file-list" tabindex="0" @keydown.up.prevent="move(-1)" @keydown.down.prevent="move(1)">
+  <aside
+    class="file-list"
+    :style="{ width: settings.sidebarWidth + 'px' }"
+    tabindex="0"
+    @keydown.up.prevent="move(-1)"
+    @keydown.down.prevent="move(1)"
+  >
     <div class="list-header">
       <span>更改的文件</span>
       <span class="count">{{ repo.files.length }}</span>
@@ -122,7 +132,7 @@ function move(delta: number) {
         <li
           v-if="row.type === 'dir'"
           class="dir-row"
-          :style="{ paddingLeft: 12 + row.depth * 16 + 'px' }"
+          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="toggleDir(row.path)"
         >
           <span class="chevron">{{ row.collapsed ? "▸" : "▾" }}</span>
@@ -131,7 +141,7 @@ function move(delta: number) {
         <li
           v-else
           :class="{ active: row.file.path === repo.selectedPath }"
-          :style="{ paddingLeft: 12 + row.depth * 16 + 'px' }"
+          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="repo.selectFile(row.file)"
         >
           <span class="badge" :class="row.file.kind">{{ BADGE[row.file.kind] }}</span>

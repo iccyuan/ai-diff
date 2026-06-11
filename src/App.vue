@@ -7,8 +7,28 @@ import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
 import { useRepoStore } from "./stores/repo";
+import { useSettingsStore } from "./stores/settings";
 
 const settingsOpen = ref(false);
+const settings = useSettingsStore();
+
+function startResize(e: PointerEvent) {
+  const startX = e.clientX;
+  const startW = settings.sidebarWidth;
+  const el = e.target as HTMLElement;
+  el.setPointerCapture(e.pointerId);
+  const move = (ev: PointerEvent) => {
+    settings.sidebarWidth = Math.min(600, Math.max(200, startW + ev.clientX - startX));
+  };
+  const up = (ev: PointerEvent) => {
+    el.releasePointerCapture(ev.pointerId);
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", up);
+    settings.saveSidebarWidth();
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", up);
+}
 
 onMounted(() => {
   // dev convenience: `VITE_OPEN_REPO=<path> npm run tauri dev` opens a repo on launch
@@ -24,6 +44,7 @@ onMounted(() => {
     <AppToolbar @open-settings="settingsOpen = true" />
     <div class="body">
       <FileList />
+      <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
       <DiffView />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />

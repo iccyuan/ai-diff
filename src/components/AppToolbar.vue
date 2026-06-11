@@ -51,7 +51,9 @@ function repoName(root: string): string {
 
     <div class="spacer"></div>
 
-    <button class="btn" :disabled="!repo.repo" title="重新读取更改列表" @click="repo.refresh()">⟳ 刷新</button>
+    <button class="btn icon" :disabled="!repo.repo" title="重新读取更改列表（已自动监听，手动刷新作兜底）" @click="repo.refresh()">
+      ⟳
+    </button>
     <button
       class="btn danger"
       :disabled="!repo.repo || !repo.repo.hasHead || !repo.files.length"
@@ -60,6 +62,6 @@ function repoName(root: string): string {
     >
       还原全部
     </button>
-    <button class="btn" title="设置" @click="emit('open-settings')">⚙</button>
+    <button class="btn icon" title="设置" @click="emit('open-settings')">⚙</button>
   </header>
 </template>
