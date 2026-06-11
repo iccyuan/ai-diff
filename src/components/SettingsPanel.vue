@@ -1,23 +1,10 @@
 <script setup lang="ts">
-import { THEMES } from "../monaco/setup";
-import { DEFAULT_EDITOR_FONT, useSettingsStore } from "../stores/settings";
+import { EDITOR_FONTS, THEMES } from "../monaco/setup";
+import { useSettingsStore } from "../stores/settings";
 
 defineProps<{ open: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 const settings = useSettingsStore();
-
-const FONT_SUGGESTIONS = [
-  "Cascadia Code",
-  "JetBrains Mono",
-  "Fira Code",
-  "Source Code Pro",
-  "Consolas",
-  "Sarasa Mono SC",
-  "等距更纱黑体 SC",
-  "Maple Mono",
-  "MesloLGS NF",
-  "Courier New",
-];
 </script>
 
 <template>
@@ -43,18 +30,12 @@ const FONT_SUGGESTIONS = [
         </label>
 
         <label class="field">
-          <span>代码字体（可输入本机任意字体，多个用逗号分隔）</span>
-          <input
-            type="text"
-            list="font-suggestions"
-            :value="settings.editorFontFamily"
-            spellcheck="false"
-            @change="settings.setEditorFont(($event.target as HTMLInputElement).value)"
-          />
-          <datalist id="font-suggestions">
-            <option v-for="f in FONT_SUGGESTIONS" :key="f" :value="f" />
-          </datalist>
-          <button class="link-btn" @click="settings.setEditorFont(DEFAULT_EDITOR_FONT)">恢复默认字体</button>
+          <span>代码字体（随软件内置，无需安装）</span>
+          <select :value="settings.editorFont" @change="settings.setEditorFont(($event.target as HTMLSelectElement).value)">
+            <option v-for="f in EDITOR_FONTS" :key="f.id" :value="f.id" :style="{ fontFamily: f.family }">
+              {{ f.label }}
+            </option>
+          </select>
         </label>
 
         <label class="field">

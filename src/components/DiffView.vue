@@ -122,7 +122,11 @@ watch(
 );
 watch(
   () => [settings.editorFontFamily, settings.editorFontSize] as const,
-  ([family, size]) => editor?.updateOptions({ fontFamily: family, fontSize: size }),
+  ([family, size]) => {
+    editor?.updateOptions({ fontFamily: family, fontSize: size });
+    // glyph widths must be re-measured once the newly selected webfont is in
+    document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
+  },
 );
 
 onBeforeUnmount(() => {

@@ -1,34 +1,36 @@
 import { defineStore } from "pinia";
 import { LazyStore } from "@tauri-apps/plugin-store";
-import { applyTheme, THEMES } from "../monaco/setup";
+import { applyTheme, DEFAULT_EDITOR_FONT_ID, EDITOR_FONTS, fontFamilyFor, THEMES } from "../monaco/setup";
 
 const persist = new LazyStore("settings.json");
-
-export const DEFAULT_EDITOR_FONT =
-  '"Cascadia Code", "JetBrains Mono", "Fira Code", "Sarasa Mono SC", Consolas, "Courier New", monospace';
 
 export const useSettingsStore = defineStore("settings", {
   state: () => ({
     monacoTheme: "vs-dark",
     renderSideBySide: true,
     recentRepos: [] as string[],
-    editorFontFamily: DEFAULT_EDITOR_FONT,
+    editorFont: DEFAULT_EDITOR_FONT_ID,
     editorFontSize: 13,
     sidebarWidth: 300,
   }),
+  getters: {
+    editorFontFamily(state): string {
+      return fontFamilyFor(state.editorFont);
+    },
+  },
   actions: {
     async load() {
       try {
         const theme = await persist.get<string>("monacoTheme");
         const side = await persist.get<boolean>("renderSideBySide");
         const recent = await persist.get<string[]>("recentRepos");
-        const font = await persist.get<string>("editorFontFamily");
+        const font = await persist.get<string>("editorFont");
         const size = await persist.get<number>("editorFontSize");
         const width = await persist.get<number>("sidebarWidth");
         if (theme && THEMES.some((t) => t.id === theme)) this.monacoTheme = theme;
         if (typeof side === "boolean") this.renderSideBySide = side;
         if (Array.isArray(recent)) this.recentRepos = recent;
-        if (font && font.trim()) this.editorFontFamily = font;
+        if (font && EDITOR_FONTS.some((f) => f.id === font)) this.editorFont = font;
         if (typeof size === "number" && size >= 10 && size <= 24) this.editorFontSize = size;
         if (typeof width === "number" && width >= 200 && width <= 600) this.sidebarWidth = width;
       } catch {
@@ -52,9 +54,10 @@ export const useSettingsStore = defineStore("settings", {
       await persist.set("recentRepos", [...this.recentRepos]);
       await persist.save();
     },
-    async setEditorFont(family: string) {
-      this.editorFontFamily = family.trim() || DEFAULT_EDITOR_FONT;
-      await persist.set("editorFontFamily", this.editorFontFamily);
+    async setEditorFont(id: string) {
+      if (!EDITOR_FONTS.some((f) => f.id === id)) return;
+      this.editorFont = id;
+      await persist.set("editorFont", id);
       await persist.save();
     },
     async setEditorFontSize(size: number) {
