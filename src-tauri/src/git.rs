@@ -290,6 +290,66 @@ pub fn open_repo(path: String) -> Result<RepoInfo, String> {
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub content: Option<String>,
+    pub is_binary: bool,
+    pub too_large: bool,
+}
+
+/// All files in the project view: tracked (incl. staged) + untracked,
+/// .gitignore respected. NUL-separated, repo-relative forward slashes.
+#[tauri::command]
+pub fn list_files(repo: String) -> Result<Vec<String>, String> {
+    let repo = PathBuf::from(repo);
+    let out = run_git_text(
+        &repo,
+        &["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    )?;
+    let mut files: Vec<String> = out
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+#[tauri::command]
+pub fn read_file(repo: String, path: String) -> Result<FileContent, String> {
+    let full = PathBuf::from(&repo).join(&path);
+    let meta = std::fs::metadata(&full).map_err(|e| format!("无法读取 {path}: {e}"))?;
+    if meta.len() > MAX_FILE_SIZE {
+        return Ok(FileContent {
+            content: None,
+            is_binary: false,
+            too_large: true,
+        });
+    }
+    let bytes = std::fs::read(&full).map_err(|e| format!("无法读取 {path}: {e}"))?;
+    if bytes.iter().take(8000).any(|&b| b == 0) {
+        return Ok(FileContent {
+            content: None,
+            is_binary: true,
+            too_large: false,
+        });
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(FileContent {
+            content: Some(text),
+            is_binary: false,
+            too_large: false,
+        }),
+        Err(_) => Ok(FileContent {
+            content: None,
+            is_binary: true,
+            too_large: false,
+        }),
+    }
+}
+
 #[tauri::command]
 pub fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
@@ -816,6 +876,37 @@ mod repo_tests {
 
         revert_file(r.root(), "staged.txt".into(), None, ChangeKind::Added).unwrap();
         assert!(!r.path().join("staged.txt").exists());
+    }
+
+    #[test]
+    fn list_files_and_read_file() {
+        let r = TempRepo::new("listing");
+        r.write(".gitignore", b"ignored.txt\n");
+        r.write("tracked.txt", b"hello\n");
+        r.commit_all();
+        r.write("untracked.txt", b"new\n");
+        r.write("ignored.txt", b"artifact\n");
+        let bin: Vec<u8> = vec![0, 1, 2, 3];
+        r.write("bin.dat", &bin);
+
+        let files = list_files(r.root()).unwrap();
+        assert!(files.contains(&"tracked.txt".to_string()));
+        assert!(files.contains(&"untracked.txt".to_string()));
+        assert!(files.contains(&"bin.dat".to_string()));
+        assert!(
+            !files.contains(&"ignored.txt".to_string()),
+            ".gitignore'd files must not appear in the all-files view"
+        );
+
+        let c = read_file(r.root(), "tracked.txt".into()).unwrap();
+        assert_eq!(c.content.as_deref(), Some("hello\n"));
+        assert!(!c.is_binary);
+
+        let b = read_file(r.root(), "bin.dat".into()).unwrap();
+        assert!(b.is_binary);
+        assert!(b.content.is_none());
+
+        assert!(read_file(r.root(), "missing.txt".into()).is_err());
     }
 
     #[test]

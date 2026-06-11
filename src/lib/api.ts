@@ -32,6 +32,12 @@ export interface FileDiff {
   hunks: Hunk[];
 }
 
+export interface FileContent {
+  content: string | null;
+  isBinary: boolean;
+  tooLarge: boolean;
+}
+
 export const api = {
   openRepo: (path: string) => invoke<RepoInfo>("open_repo", { path }),
   getStatus: (repo: string) => invoke<FileStatus[]>("get_status", { repo }),
@@ -43,4 +49,6 @@ export const api = {
     invoke<void>("revert_hunk", { repo, path, patch }),
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
+  listFiles: (repo: string) => invoke<string[]>("list_files", { repo }),
+  readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
 };

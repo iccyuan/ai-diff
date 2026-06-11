@@ -9,20 +9,28 @@ import type { Hunk } from "../lib/api";
 const repo = useRepoStore();
 const settings = useSettingsStore();
 const container = ref<HTMLElement | null>(null);
+const plainContainer = ref<HTMLElement | null>(null);
 
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
+let plainEditor: monaco.editor.IStandaloneCodeEditor | null = null;
 let models: monaco.editor.ITextModel[] = [];
 let decorations: monaco.editor.IEditorDecorationsCollection | null = null;
 // glyph-margin line -> hunk, for the gutter revert icons
 const glyphHunks = new Map<number, Hunk>();
 
+const contentMode = computed(() => !!repo.content && !repo.diff);
+
 const overlayText = computed(() => {
   if (!repo.repo) return "点击「打开项目」选择一个 git 仓库开始 review";
-  if (!repo.selected)
-    return repo.files.length ? "从左侧选择一个文件查看更改" : "工作区干净，没有未提交的更改";
-  if (repo.loadingDiff && !repo.diff) return "加载 diff…";
+  if (!repo.selectedPath)
+    return repo.mode === "all" || repo.files.length
+      ? "从左侧选择一个文件查看"
+      : "工作区干净，没有未提交的更改";
+  if (repo.loadingDiff && !repo.diff && !repo.content) return "加载中…";
   if (repo.diff?.isBinary) return "二进制文件已更改，无法显示文本 diff（仍可在左侧整体还原）";
   if (repo.diff?.tooLarge) return "文件超过 5MB，不显示 diff（仍可在左侧整体还原）";
+  if (repo.content?.isBinary) return "二进制文件，无法预览";
+  if (repo.content?.tooLarge) return "文件超过 5MB，不显示内容";
   return "";
 });
 
@@ -31,13 +39,38 @@ function clearView() {
   decorations?.clear();
   decorations = null;
   editor?.setModel(null);
+  plainEditor?.setModel(null);
   for (const m of models) m.dispose();
   models = [];
+}
+
+function renderContent() {
+  const c = repo.content;
+  if (!c || c.content == null || !repo.selectedPath) return;
+  if (!plainEditor && plainContainer.value) {
+    plainEditor = monaco.editor.create(plainContainer.value, {
+      readOnly: true,
+      automaticLayout: true,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
+      fontFamily: settings.editorFontFamily,
+      fontSize: settings.editorFontSize,
+    });
+  }
+  if (!plainEditor) return;
+  const model = monaco.editor.createModel(c.content, languageForPath(repo.selectedPath));
+  models = [model];
+  plainEditor.setModel(model);
 }
 
 function render() {
   if (!editor) return;
   clearView();
+  if (contentMode.value) {
+    renderContent();
+    return;
+  }
   const d = repo.diff;
   const f = repo.selected;
   if (!d || !f || d.isBinary || d.tooLarge) return;
@@ -115,7 +148,7 @@ onMounted(() => {
   render();
 });
 
-watch(() => repo.diff, render);
+watch(() => [repo.diff, repo.content] as const, render);
 watch(
   () => settings.renderSideBySide,
   (v) => editor?.updateOptions({ renderSideBySide: v }),
@@ -124,6 +157,7 @@ watch(
   () => [settings.editorFontFamily, settings.editorFontSize] as const,
   ([family, size]) => {
     editor?.updateOptions({ fontFamily: family, fontSize: size });
+    plainEditor?.updateOptions({ fontFamily: family, fontSize: size });
     // glyph widths must be re-measured once the newly selected webfont is in
     document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
   },
@@ -133,12 +167,15 @@ onBeforeUnmount(() => {
   clearView();
   editor?.dispose();
   editor = null;
+  plainEditor?.dispose();
+  plainEditor = null;
 });
 </script>
 
 <template>
   <section class="diff-pane">
-    <div ref="container" class="editor"></div>
+    <div v-show="!contentMode" ref="container" class="editor"></div>
+    <div v-show="contentMode" ref="plainContainer" class="editor"></div>
     <div v-if="overlayText" class="overlay">{{ overlayText }}</div>
   </section>
 </template>

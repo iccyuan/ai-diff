@@ -15,6 +15,8 @@ pub fn run() {
             git::revert_file,
             git::revert_hunk,
             git::revert_all,
+            git::list_files,
+            git::read_file,
             watcher::watch_repo
         ])
         .run(tauri::generate_context!())

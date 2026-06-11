@@ -1,6 +1,13 @@
 import { defineStore } from "pinia";
 import { listen } from "@tauri-apps/api/event";
-import { api, type FileDiff, type FileStatus, type Hunk, type RepoInfo } from "../lib/api";
+import {
+  api,
+  type FileContent,
+  type FileDiff,
+  type FileStatus,
+  type Hunk,
+  type RepoInfo,
+} from "../lib/api";
 import { toast } from "../lib/toast";
 import { useSettingsStore } from "./settings";
 
@@ -16,6 +23,9 @@ export const useRepoStore = defineStore("repo", {
     diff: null as FileDiff | null,
     loadingStatus: false,
     loadingDiff: false,
+    mode: "changes" as "changes" | "all",
+    allFiles: [] as string[],
+    content: null as FileContent | null,
   }),
   getters: {
     selected(state): FileStatus | null {
@@ -29,6 +39,8 @@ export const useRepoStore = defineStore("repo", {
         this.repo = info;
         this.selectedPath = null;
         this.diff = null;
+        this.content = null;
+        this.allFiles = [];
         await useSettingsStore().addRecent(info.root);
         await this.refresh();
         await api.watchRepo(info.root);
@@ -53,12 +65,18 @@ export const useRepoStore = defineStore("repo", {
       this.loadingStatus = true;
       try {
         this.files = await api.getStatus(this.repo.root);
+        if (this.mode === "all") {
+          this.allFiles = await api.listFiles(this.repo.root);
+        }
         const sel = this.files.find((f) => f.path === this.selectedPath);
         if (sel) {
           await this.loadDiff(sel);
+        } else if (this.mode === "all" && this.selectedPath && this.allFiles.includes(this.selectedPath)) {
+          await this.loadContent(this.selectedPath);
         } else {
           this.selectedPath = null;
           this.diff = null;
+          this.content = null;
         }
       } catch (e) {
         toast(String(e), "error");
@@ -67,18 +85,54 @@ export const useRepoStore = defineStore("repo", {
         suppressAutoRefreshUntil = Date.now() + 800;
       }
     },
+    async setMode(mode: "changes" | "all") {
+      if (this.mode === mode) return;
+      this.mode = mode;
+      if (mode === "all" && this.repo && !this.allFiles.length) {
+        try {
+          this.allFiles = await api.listFiles(this.repo.root);
+        } catch (e) {
+          toast(String(e), "error");
+        }
+      }
+    },
     async selectFile(f: FileStatus) {
-      if (this.selectedPath === f.path) return;
+      if (this.selectedPath === f.path && this.diff) return;
       this.selectedPath = f.path;
       await this.loadDiff(f);
+    },
+    /** all-files view: changed files open as diff, the rest as read-only content */
+    async selectPath(path: string) {
+      if (this.selectedPath === path) return;
+      this.selectedPath = path;
+      const st = this.files.find((f) => f.path === path);
+      if (st) {
+        await this.loadDiff(st);
+      } else {
+        await this.loadContent(path);
+      }
     },
     async loadDiff(f: FileStatus) {
       if (!this.repo) return;
       this.loadingDiff = true;
+      this.content = null;
       try {
         this.diff = await api.getFileDiff(this.repo.root, f);
       } catch (e) {
         this.diff = null;
+        toast(String(e), "error");
+      } finally {
+        this.loadingDiff = false;
+      }
+    },
+    async loadContent(path: string) {
+      if (!this.repo) return;
+      this.loadingDiff = true;
+      this.diff = null;
+      try {
+        this.content = await api.readFile(this.repo.root, path);
+      } catch (e) {
+        this.content = null;
         toast(String(e), "error");
       } finally {
         this.loadingDiff = false;
