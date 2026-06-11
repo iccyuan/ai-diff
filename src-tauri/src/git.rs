@@ -31,6 +31,19 @@ pub struct FileStatus {
     pub path: String,
     pub old_path: Option<String>,
     pub kind: ChangeKind,
+    /// line stats from numstat; None for binary files
+    pub additions: Option<u32>,
+    pub deletions: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub date: String,
+    pub subject: String,
 }
 
 #[derive(Serialize, PartialEq, Eq, Debug)]
@@ -156,12 +169,16 @@ fn parse_name_status(out: &str) -> Vec<FileStatus> {
                         path: new.to_string(),
                         old_path: Some(old.to_string()),
                         kind: ChangeKind::Renamed,
+                        additions: None,
+                        deletions: None,
                     });
                 } else {
                     files.push(FileStatus {
                         path: new.to_string(),
                         old_path: None,
                         kind: ChangeKind::Added,
+                        additions: None,
+                        deletions: None,
                     });
                 }
             }
@@ -179,11 +196,44 @@ fn parse_name_status(out: &str) -> Vec<FileStatus> {
                     path: path.to_string(),
                     old_path: None,
                     kind,
+                    additions: None,
+                    deletions: None,
                 });
             }
         }
     }
     files
+}
+
+/// numstat -z: "added\tdeleted\tpath\0" per file; renames are
+/// "added\tdeleted\t\0old\0new\0". "-" columns mean binary.
+/// Returns (new_path, additions, deletions).
+fn parse_numstat(out: &str) -> Vec<(String, Option<u32>, Option<u32>)> {
+    let mut tokens = out.split('\0');
+    let mut stats = Vec::new();
+    while let Some(tok) = tokens.next() {
+        if tok.is_empty() {
+            continue;
+        }
+        let mut cols = tok.splitn(3, '\t');
+        let (Some(a), Some(d), Some(rest)) = (cols.next(), cols.next(), cols.next()) else {
+            continue;
+        };
+        let added = a.parse::<u32>().ok();
+        let deleted = d.parse::<u32>().ok();
+        let path = if rest.is_empty() {
+            // rename: two more NUL-separated tokens, keep the new path
+            let _old = tokens.next();
+            match tokens.next() {
+                Some(p) if !p.is_empty() => p.to_string(),
+                _ => continue,
+            }
+        } else {
+            rest.to_string()
+        };
+        stats.push((path, added, deleted));
+    }
+    stats
 }
 
 /// "@@ -a[,b] +c[,d] @@ ..." -> (a, b, c, d); missing count means 1
@@ -350,6 +400,36 @@ pub fn read_file(repo: String, path: String) -> Result<FileContent, String> {
     }
 }
 
+/// best-effort line count of an untracked file; None for binary/large
+fn count_lines(full: &Path) -> Option<u32> {
+    let meta = std::fs::metadata(full).ok()?;
+    if meta.len() > 1024 * 1024 {
+        return None;
+    }
+    let bytes = std::fs::read(full).ok()?;
+    if bytes.iter().take(8000).any(|&b| b == 0) {
+        return None;
+    }
+    let newlines = bytes.iter().filter(|&&b| b == b'\n').count() as u32;
+    Some(newlines + if bytes.last().is_some_and(|&b| b != b'\n') { 1 } else { 0 })
+}
+
+fn attach_numstat(repo: &Path, base: &str, target: Option<&str>, files: &mut [FileStatus]) {
+    let mut args = vec!["diff", base];
+    if let Some(t) = target {
+        args.push(t);
+    }
+    args.extend(["--numstat", "-z", "-M", "--no-color", "--no-ext-diff"]);
+    if let Ok(out) = run_git_text(repo, &args) {
+        for (path, added, deleted) in parse_numstat(&out) {
+            if let Some(f) = files.iter_mut().find(|f| f.path == path) {
+                f.additions = added;
+                f.deletions = deleted;
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
@@ -367,16 +447,143 @@ pub fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
         ],
     )?;
     let mut files = parse_name_status(&tracked);
+    attach_numstat(&repo, &base, None, &mut files);
     let untracked = run_git_text(&repo, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     for p in untracked.split('\0').filter(|s| !s.is_empty()) {
         files.push(FileStatus {
             path: p.to_string(),
             old_path: None,
             kind: ChangeKind::Untracked,
+            additions: count_lines(&repo.join(p)),
+            deletions: Some(0),
         });
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+/// first parent of a commit, or the empty tree for root commits —
+/// both forms are valid `git diff` operands
+fn parent_ref(repo: &Path, hash: &str) -> String {
+    let spec = format!("{hash}^1");
+    match run_git(repo, &["rev-parse", "--verify", "--quiet", &spec], None) {
+        Ok(_) => spec,
+        Err(_) => EMPTY_TREE.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
+    let repo = PathBuf::from(repo);
+    if base_ref(&repo) != "HEAD" {
+        return Ok(Vec::new()); // empty repo: no history yet
+    }
+    let skip_arg = format!("--skip={skip}");
+    let count_arg = format!("--max-count={count}");
+    let out = run_git_text(
+        &repo,
+        &[
+            "log",
+            &skip_arg,
+            &count_arg,
+            "--date=format:%Y-%m-%d %H:%M",
+            "--pretty=format:%H%x00%h%x00%an%x00%ad%x00%s",
+        ],
+    )?;
+    let mut commits = Vec::new();
+    for line in out.split('\n').filter(|l| !l.is_empty()) {
+        let cols: Vec<&str> = line.splitn(5, '\0').collect();
+        if cols.len() == 5 {
+            commits.push(CommitInfo {
+                hash: cols[0].to_string(),
+                short_hash: cols[1].to_string(),
+                author: cols[2].to_string(),
+                date: cols[3].to_string(),
+                subject: cols[4].to_string(),
+            });
+        }
+    }
+    Ok(commits)
+}
+
+#[tauri::command]
+pub fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
+    let repo = PathBuf::from(repo);
+    let parent = parent_ref(&repo, &hash);
+    let out = run_git_text(
+        &repo,
+        &[
+            "diff",
+            &parent,
+            &hash,
+            "--name-status",
+            "-z",
+            "-M",
+            "--no-color",
+            "--no-ext-diff",
+        ],
+    )?;
+    let mut files = parse_name_status(&out);
+    attach_numstat(&repo, &parent, Some(&hash), &mut files);
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+/// Diff of one file within a historical commit (parent vs commit).
+/// No hunks/file_header: history view is read-only, nothing to revert.
+#[tauri::command]
+pub fn get_commit_file_diff(
+    repo: String,
+    hash: String,
+    path: String,
+    old_path: Option<String>,
+    kind: ChangeKind,
+) -> Result<FileDiff, String> {
+    let repo = PathBuf::from(repo);
+    let parent = parent_ref(&repo, &hash);
+    let head_rel = old_path.unwrap_or_else(|| path.clone());
+
+    for (skip, spec) in [
+        (kind == ChangeKind::Added || kind == ChangeKind::Untracked, format!("{parent}:{head_rel}")),
+        (kind == ChangeKind::Deleted, format!("{hash}:{path}")),
+    ] {
+        if !skip {
+            if let Ok(sz) = run_git_text(&repo, &["cat-file", "-s", &spec]) {
+                if sz.trim().parse::<u64>().unwrap_or(0) > MAX_FILE_SIZE {
+                    return Ok(FileDiff::too_large());
+                }
+            }
+        }
+    }
+
+    let mut original = None;
+    let mut modified = None;
+    let mut is_binary = false;
+    if kind != ChangeKind::Added && kind != ChangeKind::Untracked {
+        let spec = format!("{parent}:{head_rel}");
+        match String::from_utf8(run_git(&repo, &["show", &spec], None)?) {
+            Ok(s) => original = Some(s),
+            Err(_) => is_binary = true,
+        }
+    }
+    if kind != ChangeKind::Deleted && !is_binary {
+        let spec = format!("{hash}:{path}");
+        match String::from_utf8(run_git(&repo, &["show", &spec], None)?) {
+            Ok(s) => modified = Some(s),
+            Err(_) => is_binary = true,
+        }
+    }
+    if is_binary {
+        return Ok(FileDiff::binary());
+    }
+    Ok(FileDiff {
+        original,
+        modified,
+        is_binary: false,
+        too_large: false,
+        file_header: String::new(),
+        hunks: Vec::new(),
+    })
 }
 
 #[tauri::command]
@@ -556,26 +763,23 @@ mod tests {
     fn name_status_basic() {
         let out = "M\0src/a.rs\0A\0new.txt\0D\0gone.txt\0";
         let files = parse_name_status(out);
-        assert_eq!(
-            files,
-            vec![
-                FileStatus {
-                    path: "src/a.rs".into(),
-                    old_path: None,
-                    kind: ChangeKind::Modified
-                },
-                FileStatus {
-                    path: "new.txt".into(),
-                    old_path: None,
-                    kind: ChangeKind::Added
-                },
-                FileStatus {
-                    path: "gone.txt".into(),
-                    old_path: None,
-                    kind: ChangeKind::Deleted
-                },
-            ]
-        );
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].path, "src/a.rs");
+        assert_eq!(files[0].kind, ChangeKind::Modified);
+        assert_eq!(files[1].path, "new.txt");
+        assert_eq!(files[1].kind, ChangeKind::Added);
+        assert_eq!(files[2].path, "gone.txt");
+        assert_eq!(files[2].kind, ChangeKind::Deleted);
+    }
+
+    #[test]
+    fn numstat_forms() {
+        let out = "3\t1\tsrc/a.rs\0-\t-\tbin.dat\05\t0\t\0old.txt\0new.txt\0";
+        let stats = parse_numstat(out);
+        assert_eq!(stats.len(), 3);
+        assert_eq!(stats[0], ("src/a.rs".into(), Some(3), Some(1)));
+        assert_eq!(stats[1], ("bin.dat".into(), None, None)); // binary
+        assert_eq!(stats[2], ("new.txt".into(), Some(5), Some(0))); // rename keyed by new path
     }
 
     #[test]
@@ -876,6 +1080,57 @@ mod repo_tests {
 
         revert_file(r.root(), "staged.txt".into(), None, ChangeKind::Added).unwrap();
         assert!(!r.path().join("staged.txt").exists());
+    }
+
+    #[test]
+    fn history_log_files_and_diff() {
+        let r = TempRepo::new("history");
+        r.write("a.txt", b"one\ntwo\n");
+        r.commit_all();
+        r.write("a.txt", b"one\nTWO\nthree\n");
+        r.write("b.txt", b"new\n");
+        r.commit_all();
+
+        let commits = log_commits(r.root(), 0, 10).unwrap();
+        assert_eq!(commits.len(), 2);
+        assert!(!commits[0].hash.is_empty());
+        assert_eq!(commits[0].subject, "c");
+
+        // paging
+        let page2 = log_commits(r.root(), 1, 10).unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].hash, commits[1].hash);
+
+        // newest commit: a.txt modified (+2 -1), b.txt added
+        let files = commit_files(r.root(), commits[0].hash.clone()).unwrap();
+        let a = TempRepo::find(&files, "a.txt");
+        assert_eq!(a.kind, ChangeKind::Modified);
+        assert_eq!(a.additions, Some(2));
+        assert_eq!(a.deletions, Some(1));
+        assert_eq!(TempRepo::find(&files, "b.txt").kind, ChangeKind::Added);
+
+        let d = get_commit_file_diff(
+            r.root(),
+            commits[0].hash.clone(),
+            "a.txt".into(),
+            None,
+            ChangeKind::Modified,
+        )
+        .unwrap();
+        assert_eq!(d.original.as_deref(), Some("one\ntwo\n"));
+        assert_eq!(d.modified.as_deref(), Some("one\nTWO\nthree\n"));
+        assert!(d.hunks.is_empty());
+
+        // root commit diffs against the empty tree
+        let root_files = commit_files(r.root(), commits[1].hash.clone()).unwrap();
+        assert_eq!(TempRepo::find(&root_files, "a.txt").kind, ChangeKind::Added);
+
+        // working-tree status carries numstat too
+        r.write("a.txt", b"one\nTWO\nthree\nfour\n");
+        let st = get_status(r.root()).unwrap();
+        let a = TempRepo::find(&st, "a.txt");
+        assert_eq!(a.additions, Some(1));
+        assert_eq!(a.deletions, Some(0));
     }
 
     #[test]

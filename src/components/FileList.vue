@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
+import { fileIcon } from "../lib/fileIcons";
 import type { ChangeKind, FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
@@ -123,6 +124,16 @@ function badgeOf(kind: ChangeKind | undefined): string {
   return kind ? BADGE[kind] : "";
 }
 
+const totals = computed(() => {
+  let add = 0;
+  let del = 0;
+  for (const f of repo.files) {
+    add += f.additions ?? 0;
+    del += f.deletions ?? 0;
+  }
+  return { add, del };
+});
+
 async function revert(f: FileStatus) {
   const msg =
     f.kind === "untracked"
@@ -154,10 +165,15 @@ function move(delta: number) {
       <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">
         更改 <span class="count">{{ repo.files.length }}</span>
       </button>
-      <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">
-        全部文件 <span v-if="repo.allFiles.length" class="count">{{ repo.allFiles.length }}</span>
-      </button>
+      <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
       <span v-if="repo.loadingStatus" class="muted">刷新中…</span>
+    </div>
+    <div v-if="repo.mode === 'changes' && repo.files.length" class="totals">
+      共 {{ repo.files.length }} 个文件
+      <span class="stats">
+        <span class="add">+{{ totals.add }}</span>
+        <span class="del">−{{ totals.del }}</span>
+      </span>
     </div>
     <div v-if="repo.repo && repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
       工作区干净，没有未提交的更改
@@ -179,9 +195,17 @@ function move(delta: number) {
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="onRowClick(row)"
         >
-          <span v-if="row.status" class="badge" :class="row.status.kind">{{ badgeOf(row.status.kind) }}</span>
-          <span v-else class="badge plain"></span>
+          <span class="ficon">
+            <img :src="fileIcon(row.path)" alt="" />
+            <span v-if="row.status" class="status-dot" :class="row.status.kind">{{
+              badgeOf(row.status.kind)
+            }}</span>
+          </span>
           <span class="path" :title="fileTitle(row)">{{ row.name }}</span>
+          <span v-if="row.status && repo.mode === 'changes'" class="stats">
+            <span v-if="row.status.additions != null" class="add">+{{ row.status.additions }}</span>
+            <span v-if="row.status.deletions != null" class="del">−{{ row.status.deletions }}</span>
+          </span>
           <button
             v-if="row.status"
             class="row-revert"

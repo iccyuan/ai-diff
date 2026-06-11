@@ -301,12 +301,13 @@ input[type="checkbox"] {
   user-select: none;
 }
 
-.file-list .dir-row .chevron {
+.chevron {
   flex: none;
-  width: 13px;
+  width: 16px;
   text-align: center;
-  font-size: 10px;
-  opacity: 0.85;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.8;
 }
 
 .file-list .dir-row .dir-name {
@@ -328,50 +329,81 @@ input[type="checkbox"] {
   text-overflow: ellipsis;
 }
 
-.badge {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  text-align: center;
-  line-height: 16px;
-  font-weight: 600;
-  font-size: 10.5px;
-  color: #fff;
-}
-
-/* unchanged file in all-files view: keep column alignment, show a dim dot */
-.badge.plain {
-  background: transparent;
+/* file-type logo with optional change-status overlay on its corner */
+.ficon {
   position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
 }
 
-.badge.plain::before {
-  content: "";
+.ficon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.status-dot {
   position: absolute;
-  inset: 6px;
+  right: -4px;
+  bottom: -4px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: var(--border);
+  line-height: 11px;
+  font-size: 7.5px;
+  font-weight: 700;
+  color: #fff;
+  border: 1.5px solid var(--bg-panel);
+  box-sizing: content-box;
 }
 
-.badge.modified {
+.status-dot.modified {
   background: #d29922;
 }
 
-.badge.added {
+.status-dot.added {
   background: #2da44e;
 }
 
-.badge.deleted {
+.status-dot.deleted {
   background: #cf222e;
 }
 
-.badge.renamed {
+.status-dot.renamed {
   background: #8250df;
 }
 
-.badge.untracked {
+.status-dot.untracked {
   background: #57606a;
+}
+
+/* line stats: +n −m */
+.stats {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats .add {
+  color: var(--ok);
+}
+
+.stats .del {
+  color: var(--danger);
+}
+
+.totals {
+  flex: none;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .row-revert {
@@ -446,6 +478,126 @@ input[type="checkbox"] {
 .hunk-range-marker {
   border-left: 3px solid var(--accent);
   margin-left: 3px;
+}
+
+/* ---------- history panel ---------- */
+.history {
+  flex: none;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  flex: none;
+}
+
+.history-header .close {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: none;
+}
+
+.history .commits {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.commit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px 10px 7px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s ease;
+}
+
+.commit-row:hover {
+  background: var(--bg-hover);
+}
+
+.commit-row .chevron {
+  margin-top: 1px;
+}
+
+.commit-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.commit-main .subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-main .meta {
+  display: flex;
+  gap: 8px;
+  color: var(--fg-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.commit-main .hash {
+  font-family: Consolas, monospace;
+  color: var(--accent);
+}
+
+.commit-files {
+  list-style: none;
+  margin: 0;
+  padding: 2px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.commit-files li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 28px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.commit-files li:hover {
+  background: var(--bg-hover);
+}
+
+.commit-files li.active {
+  background: var(--bg-active);
+}
+
+.commit-files .path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.commit-files .loading-files {
+  cursor: default;
+}
+
+.list-tail {
+  padding: 10px 12px;
+  text-align: center;
+}
+
+.btn.toggle-on {
+  background: var(--bg-active);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ---------- modal ---------- */

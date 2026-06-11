@@ -12,6 +12,16 @@ export interface FileStatus {
   path: string;
   oldPath: string | null;
   kind: ChangeKind;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface CommitInfo {
+  hash: string;
+  shortHash: string;
+  author: string;
+  date: string;
+  subject: string;
 }
 
 export interface Hunk {
@@ -51,4 +61,15 @@ export const api = {
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
   listFiles: (repo: string) => invoke<string[]>("list_files", { repo }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
+  logCommits: (repo: string, skip: number, count: number) =>
+    invoke<CommitInfo[]>("log_commits", { repo, skip, count }),
+  commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
+  getCommitFileDiff: (repo: string, hash: string, f: FileStatus) =>
+    invoke<FileDiff>("get_commit_file_diff", {
+      repo,
+      hash,
+      path: f.path,
+      oldPath: f.oldPath,
+      kind: f.kind,
+    }),
 };

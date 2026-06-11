@@ -22,7 +22,7 @@ const contentMode = computed(() => !!repo.content && !repo.diff);
 
 const overlayText = computed(() => {
   if (!repo.repo) return "点击「打开项目」选择一个 git 仓库开始 review";
-  if (!repo.selectedPath)
+  if (!repo.selectedPath && !repo.selectedCommitPath)
     return repo.mode === "all" || repo.files.length
       ? "从左侧选择一个文件查看"
       : "工作区干净，没有未提交的更改";
@@ -73,17 +73,18 @@ function render() {
   }
   const d = repo.diff;
   const f = repo.selected;
-  if (!d || !f || d.isBinary || d.tooLarge) return;
+  const diffPath = repo.selectedCommitPath ?? f?.path;
+  if (!d || !diffPath || d.isBinary || d.tooLarge) return;
 
-  const lang = languageForPath(f.path);
+  const lang = languageForPath(diffPath);
   const original = monaco.editor.createModel(d.original ?? "", lang);
   const modified = monaco.editor.createModel(d.modified ?? "", lang);
   models = [original, modified];
   editor.setModel({ original, modified });
 
-  // hunk-level revert only makes sense for content edits; added/deleted/untracked
-  // files are reverted whole from the file list
-  if ((f.kind === "modified" || f.kind === "renamed") && d.hunks.length > 0) {
+  // hunk-level revert only applies to working-tree content edits (f is null
+  // for history diffs); added/deleted/untracked revert whole from the list
+  if (f && (f.kind === "modified" || f.kind === "renamed") && d.hunks.length > 0) {
     const mod = editor.getModifiedEditor();
     const decos: monaco.editor.IModelDeltaDecoration[] = [];
     for (const h of d.hunks) {

@@ -17,6 +17,9 @@ pub fn run() {
             git::revert_all,
             git::list_files,
             git::read_file,
+            git::log_commits,
+            git::commit_files,
+            git::get_commit_file_diff,
             watcher::watch_repo
         ])
         .run(tauri::generate_context!())

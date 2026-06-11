@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
+import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
@@ -11,6 +12,7 @@ import { useSettingsStore } from "./stores/settings";
 
 const settingsOpen = ref(false);
 const settings = useSettingsStore();
+const repo = useRepoStore();
 
 function startResize(e: PointerEvent) {
   const startX = e.clientX;
@@ -46,6 +48,7 @@ onMounted(() => {
       <FileList />
       <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
       <DiffView />
+      <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
     <ConfirmDialog />

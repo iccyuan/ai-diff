@@ -62,6 +62,15 @@ function repoName(root: string): string {
     >
       还原全部
     </button>
+    <button
+      class="btn"
+      :class="{ 'toggle-on': repo.historyOpen }"
+      :disabled="!repo.repo"
+      title="显示/隐藏提交历史"
+      @click="repo.toggleHistory()"
+    >
+      历史
+    </button>
     <button class="btn icon" title="设置" @click="emit('open-settings')">⚙</button>
   </header>
 </template>
