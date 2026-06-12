@@ -152,6 +152,10 @@ function move(delta: number) {
   const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), fileRows.length - 1);
   onRowClick(fileRows[next]);
 }
+
+function projName(root: string): string {
+  return root.split("/").pop() ?? root;
+}
 </script>
 
 <template>
@@ -162,24 +166,41 @@ function move(delta: number) {
     @keydown.up.prevent="move(-1)"
     @keydown.down.prevent="move(1)"
   >
-    <div class="tabs">
-      <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">
-        更改 <span class="count">{{ repo.files.length }}</span>
-      </button>
-      <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
-      <Spinner v-if="repo.loadingStatus" :size="14" />
-    </div>
-    <div v-if="repo.mode === 'changes' && repo.files.length" class="totals">
-      共 {{ repo.files.length }} 个文件
-      <span class="stats">
-        <span class="add">+{{ totals.add }}</span>
-        <span class="del">−{{ totals.del }}</span>
-      </span>
-    </div>
-    <div v-if="repo.repo && repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
-      工作区干净，没有未提交的更改
-    </div>
-    <ul>
+    <div v-if="!repo.workspaces.length" class="list-empty">打开或拖入一个 git 仓库开始 review</div>
+    <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
+      <div
+        class="proj-header"
+        :class="{ active: i === repo.active }"
+        :title="w.repo.root"
+        @click="repo.activateWorkspace(i)"
+      >
+        <svg class="chevron" :class="{ open: i === repo.active }" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
+        </svg>
+        <span class="proj-name">{{ projName(w.repo.root) }}</span>
+        <span v-if="w.repo.branch" class="branch">⎇ {{ w.repo.branch }}</span>
+        <span v-else-if="!w.repo.hasHead" class="branch warn">空仓库</span>
+        <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
+      </div>
+      <template v-if="i === repo.active">
+        <div class="tabs">
+          <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">
+            更改 <span class="count">{{ repo.files.length }}</span>
+          </button>
+          <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
+          <Spinner v-if="repo.loadingStatus" :size="14" />
+        </div>
+        <div v-if="repo.mode === 'changes' && repo.files.length" class="totals">
+          共 {{ repo.files.length }} 个文件
+          <span class="stats">
+            <span class="add">+{{ totals.add }}</span>
+            <span class="del">−{{ totals.del }}</span>
+          </span>
+        </div>
+        <div v-if="repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
+          工作区干净，没有未提交的更改
+        </div>
+        <ul>
       <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.path">
         <li
           v-if="row.type === 'dir'"
@@ -218,7 +239,9 @@ function move(delta: number) {
             {{ row.status.kind === "untracked" ? "✕" : "↶" }}
           </button>
         </li>
+        </template>
+        </ul>
       </template>
-    </ul>
+    </template>
   </aside>
 </template>
