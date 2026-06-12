@@ -156,6 +156,25 @@ function move(delta: number) {
 function projName(root: string): string {
   return root.split("/").pop() ?? root;
 }
+
+// collapsed project sections; clicking the active header toggles its tree
+const collapsedProjects = ref(new Set<string>());
+
+function isExpanded(i: number, root: string): boolean {
+  return i === repo.active && !collapsedProjects.value.has(root);
+}
+
+function onProjectClick(i: number, root: string) {
+  const s = new Set(collapsedProjects.value);
+  if (i === repo.active) {
+    if (s.has(root)) s.delete(root);
+    else s.add(root);
+  } else {
+    repo.activateWorkspace(i);
+    s.delete(root); // activating always reveals the tree
+  }
+  collapsedProjects.value = s;
+}
 </script>
 
 <template>
@@ -172,9 +191,9 @@ function projName(root: string): string {
         class="proj-header"
         :class="{ active: i === repo.active }"
         :title="w.repo.root"
-        @click="repo.activateWorkspace(i)"
+        @click="onProjectClick(i, w.repo.root)"
       >
-        <svg class="chevron" :class="{ open: i === repo.active }" viewBox="0 0 16 16" aria-hidden="true">
+        <svg class="chevron" :class="{ open: isExpanded(i, w.repo.root) }" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
         </svg>
         <span class="proj-name">{{ projName(w.repo.root) }}</span>
@@ -182,7 +201,7 @@ function projName(root: string): string {
         <span v-else-if="!w.repo.hasHead" class="branch warn">空仓库</span>
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
-      <template v-if="i === repo.active">
+      <template v-if="isExpanded(i, w.repo.root)">
         <div class="tabs">
           <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">
             更改 <span class="count">{{ repo.files.length }}</span>
