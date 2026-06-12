@@ -125,15 +125,15 @@ function badgeOf(kind: ChangeKind | undefined): string {
   return kind ? BADGE[kind] : "";
 }
 
-const totals = computed(() => {
+function wsTotals(files: FileStatus[]): { add: number; del: number } {
   let add = 0;
   let del = 0;
-  for (const f of repo.files) {
+  for (const f of files) {
     add += f.additions ?? 0;
     del += f.deletions ?? 0;
   }
   return { add, del };
-});
+}
 
 async function revert(f: FileStatus) {
   const msg =
@@ -185,6 +185,10 @@ function onProjectClick(i: number, root: string) {
     @keydown.up.prevent="move(-1)"
     @keydown.down.prevent="move(1)"
   >
+    <div class="tabs">
+      <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">更改</button>
+      <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
+    </div>
     <div v-if="!repo.workspaces.length" class="list-empty">打开或拖入一个 git 仓库开始 review</div>
     <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
       <div
@@ -199,23 +203,14 @@ function onProjectClick(i: number, root: string) {
         <span class="proj-name">{{ projName(w.repo.root) }}</span>
         <span v-if="w.repo.branch" class="branch">⎇ {{ w.repo.branch }}</span>
         <span v-else-if="!w.repo.hasHead" class="branch warn">空仓库</span>
+        <Spinner v-if="i === repo.active && repo.loadingStatus" :size="12" />
+        <span v-if="repo.mode === 'changes' && w.files.length" class="stats proj-stats">
+          <span class="add">+{{ wsTotals(w.files).add }}</span>
+          <span class="del">−{{ wsTotals(w.files).del }}</span>
+        </span>
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
       <template v-if="isExpanded(i, w.repo.root)">
-        <div class="tabs">
-          <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">
-            更改 <span class="count">{{ repo.files.length }}</span>
-          </button>
-          <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
-          <Spinner v-if="repo.loadingStatus" :size="14" />
-        </div>
-        <div v-if="repo.mode === 'changes' && repo.files.length" class="totals">
-          共 {{ repo.files.length }} 个文件
-          <span class="stats">
-            <span class="add">+{{ totals.add }}</span>
-            <span class="del">−{{ totals.del }}</span>
-          </span>
-        </div>
         <div v-if="repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
           工作区干净，没有未提交的更改
         </div>

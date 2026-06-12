@@ -31,7 +31,6 @@ export interface Workspace {
   repo: RepoInfo;
   files: FileStatus[];
   allFiles: string[];
-  mode: "changes" | "all";
   selectedPath: string | null;
   diff: FileDiff | null;
   content: FileContent | null;
@@ -56,7 +55,6 @@ function blankWorkspace(info: RepoInfo): Workspace {
     repo: info,
     files: [],
     allFiles: [],
-    mode: "changes",
     selectedPath: null,
     diff: null,
     content: null,
@@ -85,6 +83,8 @@ export const useRepoStore = defineStore("repo", {
   state: () => ({
     workspaces: [] as Workspace[],
     active: -1,
+    /** sidebar view mode is global: one switch for every project */
+    viewMode: "changes" as "changes" | "all",
   }),
   getters: {
     ws(state): Workspace | null {
@@ -99,8 +99,8 @@ export const useRepoStore = defineStore("repo", {
     allFiles(): string[] {
       return this.ws?.allFiles ?? [];
     },
-    mode(): "changes" | "all" {
-      return this.ws?.mode ?? "changes";
+    mode(state): "changes" | "all" {
+      return state.viewMode;
     },
     selectedPath(): string | null {
       return this.ws?.selectedPath ?? null;
@@ -189,7 +189,9 @@ export const useRepoStore = defineStore("repo", {
       }
     },
     activateWorkspace(i: number) {
-      if (i >= 0 && i < this.workspaces.length) this.active = i;
+      if (i < 0 || i >= this.workspaces.length) return;
+      this.active = i;
+      if (this.viewMode === "all") this.ensureAllFiles();
     },
     closeWorkspace(i: number) {
       const w = this.workspaces[i];
@@ -210,7 +212,7 @@ export const useRepoStore = defineStore("repo", {
       w.loadingStatus = true;
       try {
         w.files = await api.getStatus(w.repo.root);
-        if (w.mode === "all") {
+        if (this.viewMode === "all") {
           w.allFiles = await api.listFiles(w.repo.root);
         }
         if (w.historyOpen) {
@@ -233,9 +235,8 @@ export const useRepoStore = defineStore("repo", {
       }
     },
     async setMode(mode: "changes" | "all") {
-      const w = this.ws;
-      if (!w || w.mode === mode) return;
-      w.mode = mode;
+      if (this.viewMode === mode) return;
+      this.viewMode = mode;
       if (mode === "all") await this.ensureAllFiles();
     },
     async ensureAllFiles() {

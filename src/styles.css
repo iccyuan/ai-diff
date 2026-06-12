@@ -272,15 +272,20 @@ input[type="checkbox"] {
 }
 
 .proj-header .branch {
-  flex: 1;
+  flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 40%;
   font-size: 11.5px;
+}
+
+.proj-header .proj-stats {
+  margin-left: auto;
+  font-size: 10.5px;
 }
 
 .proj-close {
   flex: none;
-  margin-left: auto;
   border: none;
   background: transparent;
   color: var(--fg-muted);
