@@ -11,7 +11,8 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
 import SearchPanel from "./components/SearchPanel.vue";
-import { openQuickOpen, openSearch } from "./lib/palette";
+import SymbolChooser from "./components/SymbolChooser.vue";
+import { openQuickOpen, openBottomSearch } from "./lib/palette";
 import { useRepoStore } from "./stores/repo";
 import { useSettingsStore } from "./stores/settings";
 
@@ -37,21 +38,17 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
-// global shortcuts, Eclipse + IDEA flavors:
-// open resource = Ctrl+Shift+R (Eclipse) / Ctrl+Shift+N (IDEA)
-// text search   = Ctrl+H (Eclipse)       / Ctrl+Shift+F (IDEA)
+// Eclipse shortcuts: Ctrl+Shift+R open resource, Ctrl+H file search
 function onGlobalKey(e: KeyboardEvent) {
   if (!repo.repo || !e.ctrlKey) return;
-  const quickOpen = e.shiftKey && (e.code === "KeyR" || e.code === "KeyN");
-  const search = (e.shiftKey && e.code === "KeyF") || (!e.shiftKey && !e.altKey && e.code === "KeyH");
-  if (quickOpen) {
+  if (e.shiftKey && e.code === "KeyR") {
     e.preventDefault();
     e.stopPropagation();
     openQuickOpen();
-  } else if (search) {
+  } else if (!e.shiftKey && !e.altKey && e.code === "KeyH") {
     e.preventDefault();
     e.stopPropagation();
-    openSearch();
+    openBottomSearch();
   }
 }
 
@@ -73,12 +70,13 @@ onMounted(async () => {
       <div class="center">
         <ViewTabs />
         <DiffView />
+        <SearchPanel />
       </div>
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
     <QuickOpen />
-    <SearchPanel />
+    <SymbolChooser />
     <ConfirmDialog />
     <ToastHost />
   </div>

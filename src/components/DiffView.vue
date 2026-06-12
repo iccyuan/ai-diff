@@ -7,9 +7,10 @@ import { languageForPath, monaco } from "../monaco/setup";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
-import { openSearch } from "../lib/palette";
+import { openBottomSearch, openChooser } from "../lib/palette";
+import { api, type Hunk } from "../lib/api";
+import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
-import type { Hunk } from "../lib/api";
 
 const repo = useRepoStore();
 const settings = useSettingsStore();
@@ -45,33 +46,68 @@ function onGlobalKeyUp(e: KeyboardEvent) {
   if (e.key === "Control") for (const clear of ctrlLinkClearers) clear();
 }
 
-/** Eclipse/IDEA navigation: F3 / Ctrl+B jump to symbol, Ctrl+Shift+G / Alt+F7
- *  find references (repo-wide whole-word search), Ctrl+L go-to-line.
- *  Holding Ctrl turns the hovered symbol into an IDEA-style underlined link. */
+/** IDEA-style jump: single hit goes straight to the location, several hits
+ *  open a small inline chooser at (x, y) — no full-screen dialog. */
+async function jumpToSymbol(word: string, x: number, y: number) {
+  if (!repo.repo) return;
+  let hits;
+  try {
+    hits = await api.searchText(repo.repo.root, word, true, 200);
+  } catch (e) {
+    toast(String(e), "error");
+    return;
+  }
+  if (!hits.length) {
+    toast(`未找到符号 "${word}"`);
+    return;
+  }
+  if (hits.length === 1) {
+    await repo.openAtLine(hits[0].path, hits[0].line);
+    return;
+  }
+  openChooser(x, y, word, hits);
+}
+
+/** screen coordinates of the editor cursor, for anchoring the chooser */
+function cursorScreenPos(ed: monaco.editor.IStandaloneCodeEditor): { x: number; y: number } {
+  const pos = ed.getPosition();
+  const dom = ed.getDomNode();
+  if (!pos || !dom) return { x: 200, y: 200 };
+  const vp = ed.getScrolledVisiblePosition(pos);
+  const rect = dom.getBoundingClientRect();
+  return { x: rect.left + (vp?.left ?? 0), y: rect.top + (vp?.top ?? 0) + (vp?.height ?? 18) + 4 };
+}
+
+/** Eclipse keys: F3 jump to symbol, Ctrl+Shift+G references (bottom panel),
+ *  Ctrl+L go-to-line. Ctrl+hover underlines the symbol as a link (IDEA look). */
 function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
-  const symbolSearch = () => {
+  const wordAtCursor = () => {
     const pos = ed.getPosition();
-    const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
-    if (word) openSearch(word, true);
+    return pos ? ed.getModel()?.getWordAtPosition(pos)?.word : undefined;
   };
   ed.addAction({
     id: "open-declaration",
-    label: "跳转到符号（全仓库）",
-    keybindings: [monaco.KeyCode.F3, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
+    label: "跳转到符号",
+    keybindings: [monaco.KeyCode.F3],
     contextMenuGroupId: "navigation",
     contextMenuOrder: 1,
-    run: symbolSearch,
+    run: () => {
+      const word = wordAtCursor();
+      if (!word) return;
+      const { x, y } = cursorScreenPos(ed);
+      jumpToSymbol(word, x, y);
+    },
   });
   ed.addAction({
     id: "find-references",
-    label: "查找引用（全仓库）",
-    keybindings: [
-      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyG,
-      monaco.KeyMod.Alt | monaco.KeyCode.F7,
-    ],
+    label: "查找引用",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyG],
     contextMenuGroupId: "navigation",
     contextMenuOrder: 2,
-    run: symbolSearch,
+    run: () => {
+      const word = wordAtCursor();
+      if (word) openBottomSearch(word, true);
+    },
   });
   ed.addAction({
     id: "goto-line-alias",
@@ -119,7 +155,7 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
     const pos = e.target.position;
     const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
     clearLink();
-    if (word) openSearch(word, true);
+    if (word) jumpToSymbol(word, e.event.posx, e.event.posy + 16);
   });
 }
 

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { palette, closePalettes } from "../lib/palette";
+import { palette } from "../lib/palette";
+
+function closePalettes() {
+  palette.quickOpen = false;
+}
 import { useRepoStore } from "../stores/repo";
 import { fileIcon } from "../lib/fileIcons";
 

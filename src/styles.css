@@ -1156,6 +1156,173 @@ input[type="checkbox"] {
   background: transparent !important;
 }
 
+/* ---------- bottom search tool panel (IDEA Find window style) ---------- */
+.bottom-search {
+  flex: none;
+  height: 260px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.bs-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px 4px;
+  flex: none;
+}
+
+.bs-bar input[type="text"],
+.bs-bar input:not([type]) {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: var(--bg-panel);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 7px 12px;
+  border-radius: 7px;
+  box-shadow: var(--shadow);
+}
+
+.bs-status {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  min-width: 70px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.bs-close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 13px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bs-close:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.bs-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.bs-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bs-list li:hover {
+  background: var(--bg-hover);
+}
+
+.bs-list li.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.bs-list .vicon,
+.symbol-chooser .vicon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.bs-list .ppath,
+.symbol-chooser .ppath {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.bs-list .pline,
+.symbol-chooser .pline {
+  color: var(--accent);
+}
+
+.bs-list .ptext,
+.symbol-chooser .ptext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.bs-empty {
+  color: var(--fg-muted);
+  justify-content: center;
+  cursor: default !important;
+}
+
+/* ---------- inline symbol chooser (IDEA Choose Declaration style) ---------- */
+.chooser-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+}
+
+.symbol-chooser {
+  position: fixed;
+  background: var(--bg-panel);
+  border-radius: 10px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+  outline: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: modal-in 0.1s ease;
+}
+
+.chooser-title {
+  padding: 8px 14px 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  flex: none;
+}
+
+.symbol-chooser ul {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 6px;
+  overflow-y: auto;
+}
+
+.symbol-chooser li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.symbol-chooser li.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 /* IDEA-style ctrl+hover symbol link inside Monaco */
 .symbol-link {
   color: var(--accent) !important;
