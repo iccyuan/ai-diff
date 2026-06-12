@@ -1,29 +1,31 @@
 /* app chrome follows the Monaco theme via [data-theme] set in applyTheme() */
 :root[data-theme="light"] {
-  --bg: #f6f7f9;
+  --bg: #f2f2f4;
   --bg-panel: #ffffff;
-  --bg-hover: #eceef1;
-  --bg-active: #dde3ea;
-  --fg: #1f2328;
-  --fg-muted: #656d76;
-  --border: #d0d7de;
-  --accent: #0969da;
-  --danger: #cf222e;
-  --ok: #1a7f37;
+  --bg-hover: rgba(0, 0, 0, 0.05);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --fg: #1d1d1f;
+  --fg-muted: #6e6e73;
+  --border: rgba(0, 0, 0, 0.09);
+  --accent: #0a7aff;
+  --danger: #e0302e;
+  --ok: #1a8f3c;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 
 :root[data-theme="dark"],
 :root {
-  --bg: #1e1e1e;
-  --bg-panel: #252526;
-  --bg-hover: #2a2d2e;
-  --bg-active: #37373d;
-  --fg: #cccccc;
-  --fg-muted: #8b949e;
-  --border: #3c3c3c;
-  --accent: #4daafc;
-  --danger: #f85149;
-  --ok: #3fb950;
+  --bg: #232326;
+  --bg-panel: #2c2c2f;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --fg: #e8e8ea;
+  --fg-muted: #98989f;
+  --border: rgba(255, 255, 255, 0.09);
+  --accent: #409cff;
+  --danger: #ff6961;
+  --ok: #4cc466;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -94,10 +96,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+  padding: 8px 12px;
+  background: var(--bg);
   position: relative;
   z-index: 6;
   flex: none;
@@ -114,9 +114,8 @@ body {
   margin-left: 6px;
   min-width: 0;
   background: var(--bg-hover);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: 7px;
+  padding: 5px 12px;
 }
 
 .repo-name {
@@ -138,17 +137,18 @@ body {
 /* ---------- buttons / inputs ---------- */
 .btn {
   padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: none;
+  border-radius: 7px;
   background: var(--bg-panel);
+  box-shadow: var(--shadow);
   color: var(--fg);
   cursor: pointer;
   font-size: 13px;
   font-family: inherit;
   transition:
     background 0.12s ease,
-    border-color 0.12s ease,
-    color 0.12s ease;
+    color 0.12s ease,
+    filter 0.12s ease;
 }
 
 .btn.icon {
@@ -158,7 +158,11 @@ body {
 }
 
 .btn:hover:not(:disabled) {
-  background: var(--bg-hover);
+  filter: brightness(0.96);
+}
+
+:root[data-theme="dark"] .btn:hover:not(:disabled) {
+  filter: brightness(1.15);
 }
 
 .btn:disabled {
@@ -179,12 +183,12 @@ body {
 
 .btn.danger {
   color: var(--danger);
-  border-color: var(--danger);
 }
 
 .btn.danger:hover:not(:disabled) {
   background: var(--danger);
   color: #fff;
+  filter: none;
 }
 
 select,
@@ -192,9 +196,10 @@ input[type="checkbox"] {
   background: var(--bg-panel);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 8px;
+  border-radius: 7px;
+  padding: 6px 8px;
   font-size: 13px;
+  box-shadow: var(--shadow);
 }
 
 /* ---------- layout ---------- */
@@ -219,60 +224,56 @@ input[type="checkbox"] {
   opacity: 0.55;
 }
 
-/* ---------- file list ---------- */
+/* ---------- file list (macOS sidebar look: tone separation, no border) ---------- */
 .file-list {
   flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
+  background: var(--bg);
   outline: none;
   overflow: hidden;
 }
 
+/* segmented control */
 .tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
+  gap: 2px;
+  margin: 4px 10px 6px;
+  padding: 2px;
+  background: var(--bg-active);
+  border-radius: 8px;
   flex: none;
 }
 
 .tabs button {
+  flex: 1;
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: 12.5px;
   font-family: inherit;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border-radius: 6px;
   cursor: pointer;
+  white-space: nowrap;
   transition:
     background 0.12s ease,
-    color 0.12s ease;
-}
-
-.tabs button:hover {
-  background: var(--bg-hover);
+    color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .tabs button.active {
-  background: var(--bg-active);
+  background: var(--bg-panel);
   color: var(--fg);
   font-weight: 600;
+  box-shadow: var(--shadow);
 }
 
 .tabs .count {
-  background: var(--bg-active);
-  border-radius: 8px;
-  padding: 0 6px;
+  color: var(--fg-muted);
   font-weight: 400;
   font-size: 11px;
-}
-
-.tabs button.active .count {
-  background: var(--bg-panel);
 }
 
 .muted {
@@ -372,7 +373,7 @@ input[type="checkbox"] {
   font-weight: 700;
   font-family: "Segoe UI", Arial, sans-serif;
   color: #fff;
-  border: 1.5px solid var(--bg-panel);
+  border: 1.5px solid var(--bg);
   box-sizing: content-box;
   text-align: center;
 }
@@ -416,8 +417,7 @@ input[type="checkbox"] {
 
 .totals {
   flex: none;
-  padding: 5px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 2px 16px 6px;
   color: var(--fg-muted);
   font-size: 12px;
   display: flex;
@@ -472,7 +472,7 @@ input[type="checkbox"] {
   justify-content: center;
   gap: 16px;
   color: var(--fg-muted);
-  background: var(--bg);
+  background: var(--bg-panel);
   font-size: 14px;
   padding: 24px;
   text-align: center;
@@ -513,8 +513,7 @@ input[type="checkbox"] {
   width: 340px;
   display: flex;
   flex-direction: column;
-  background: var(--bg-panel);
-  border-left: 1px solid var(--border);
+  background: var(--bg);
   overflow: hidden;
 }
 
@@ -522,8 +521,7 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 8px 8px 12px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 8px 4px 16px;
   font-weight: 600;
   flex: none;
 }
@@ -531,21 +529,25 @@ input[type="checkbox"] {
 .history-header .close {
   font-size: 12px;
   padding: 4px 8px;
-  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--fg-muted);
 }
 
 .history .commits {
   flex: 1;
   overflow-y: auto;
+  padding: 2px 6px 8px;
 }
 
 .commit-row {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  padding: 8px 10px 8px 6px;
+  padding: 7px 8px 7px 4px;
+  margin: 1px 0;
+  border-radius: 8px;
   cursor: pointer;
-  border-bottom: 1px solid var(--border);
   transition: background 0.1s ease;
 }
 
@@ -610,17 +612,16 @@ input[type="checkbox"] {
 
 .commit-files {
   list-style: none;
-  margin: 0;
-  padding: 2px 0;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  margin: 0 0 4px;
+  padding: 0;
 }
 
 .commit-files li {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 4px 10px 4px 28px;
+  padding: 4px 10px 4px 30px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -630,7 +631,7 @@ input[type="checkbox"] {
 }
 
 .commit-files li.active {
-  background: var(--bg-active);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
 .commit-files .path {
@@ -724,10 +725,19 @@ input[type="checkbox"] {
   right: 22px;
   z-index: 10;
   display: flex;
-  border: 1px solid var(--border);
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-active);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.md-toggle button {
   border-radius: 6px;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.md-toggle button.active {
+  box-shadow: var(--shadow);
 }
 
 .md-toggle button {
@@ -777,19 +787,18 @@ input[type="checkbox"] {
 .modal {
   background: var(--bg-panel);
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 14px;
   padding: 22px 26px;
   width: 440px;
   max-width: 90vw;
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
 }
 
 .modal input[type="text"] {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 7px 10px;
   font-size: 13px;
   width: 100%;
