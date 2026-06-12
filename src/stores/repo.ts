@@ -199,13 +199,40 @@ export const useRepoStore = defineStore("repo", {
       if (next) {
         this.activateTab(next.id);
       } else {
-        this.activeTabId = null;
-        this.selectedPath = null;
-        this.selectedCommit = null;
-        this.selectedCommitPath = null;
-        this.diff = null;
-        this.content = null;
+        this.clearActiveView();
       }
+    },
+    clearActiveView() {
+      this.activeTabId = null;
+      this.selectedPath = null;
+      this.selectedCommit = null;
+      this.selectedCommitPath = null;
+      this.diff = null;
+      this.content = null;
+    },
+    closeAllTabs() {
+      this.tabs = [];
+      this.clearActiveView();
+    },
+    closeOtherTabs(id: string) {
+      const keep = this.tabs.find((t) => t.id === id);
+      if (!keep) return;
+      this.tabs = [keep];
+      if (this.activeTabId !== id) this.activateTab(id);
+    },
+    closeLeftTabs(id: string) {
+      const i = this.tabs.findIndex((t) => t.id === id);
+      if (i <= 0) return;
+      const closingActive = this.tabs.slice(0, i).some((t) => t.id === this.activeTabId);
+      this.tabs = this.tabs.slice(i);
+      if (closingActive) this.activateTab(id);
+    },
+    closeRightTabs(id: string) {
+      const i = this.tabs.findIndex((t) => t.id === id);
+      if (i < 0 || i === this.tabs.length - 1) return;
+      const closingActive = this.tabs.slice(i + 1).some((t) => t.id === this.activeTabId);
+      this.tabs = this.tabs.slice(0, i + 1);
+      if (closingActive) this.activateTab(id);
     },
     /** history panel actions */
     async toggleHistory() {
