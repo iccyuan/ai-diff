@@ -1156,6 +1156,13 @@ input[type="checkbox"] {
   background: transparent !important;
 }
 
+/* IDEA-style ctrl+hover symbol link inside Monaco */
+.symbol-link {
+  color: var(--accent) !important;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ---------- spinner ---------- */
 @keyframes spin {
   to {

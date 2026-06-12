@@ -37,14 +37,18 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
-// Eclipse-style global shortcuts: Ctrl+Shift+R open resource, Ctrl+H search
+// global shortcuts, Eclipse + IDEA flavors:
+// open resource = Ctrl+Shift+R (Eclipse) / Ctrl+Shift+N (IDEA)
+// text search   = Ctrl+H (Eclipse)       / Ctrl+Shift+F (IDEA)
 function onGlobalKey(e: KeyboardEvent) {
-  if (!repo.repo) return;
-  if (e.ctrlKey && e.shiftKey && e.code === "KeyR") {
+  if (!repo.repo || !e.ctrlKey) return;
+  const quickOpen = e.shiftKey && (e.code === "KeyR" || e.code === "KeyN");
+  const search = (e.shiftKey && e.code === "KeyF") || (!e.shiftKey && !e.altKey && e.code === "KeyH");
+  if (quickOpen) {
     e.preventDefault();
     e.stopPropagation();
     openQuickOpen();
-  } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyH") {
+  } else if (search) {
     e.preventDefault();
     e.stopPropagation();
     openSearch();

@@ -28,12 +28,14 @@ diff，并支持整体还原 / 单文件还原 / 单个修改块（hunk）还原
   - 还原全部 = `git reset --hard HEAD` + `git clean -fd`（不带 `-x`，
     .gitignore 命中的文件不受影响）
   - 所有还原操作先弹确认框
-- Eclipse 风格代码操作（基于 git grep 的文本索引，跨语言可用）：
-  - `Ctrl+Shift+R` 打开资源（文件名模糊搜索）
-  - `Ctrl+H` 全局字符串搜索（含未跟踪文件，点结果直达行）
-  - `F3` 符号跳转 / `Ctrl+Shift+G` 查找引用 / `Ctrl+点击` 符号
+- Eclipse / IDEA 风格代码操作（基于 git grep 的文本索引，跨语言可用）：
+  - 打开资源：`Ctrl+Shift+R`（Eclipse）/ `Ctrl+Shift+N`（IDEA）
+  - 全局字符串搜索：`Ctrl+H`（Eclipse）/ `Ctrl+Shift+F`（IDEA），
+    含未跟踪文件，点结果直达行
+  - 符号跳转：`F3` / `Ctrl+B`，查找引用：`Ctrl+Shift+G` / `Alt+F7`
     （全仓库全字匹配；语义级类型跳转需 LSP，不在本工具范围）
-  - `Ctrl+L` 转到行、`Ctrl+F` 编辑器内查找（Monaco 内置）
+  - **Ctrl+悬停**符号变蓝色下划线链接（IDEA 风格），点击即跳转
+  - `Ctrl+L` / `Ctrl+G` 转到行、`Ctrl+F` 编辑器内查找（Monaco 内置）
 - 15 套代码主题（VS / GitHub / Monokai / Solarized / Dracula / Nord 等
   浅深色），应用外壳颜色随主题联动；主题与最近打开仓库持久化
 - 比较语义固定为 **HEAD vs 工作树**：AI 代理是否 stage 过都能看全

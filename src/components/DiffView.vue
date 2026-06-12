@@ -38,8 +38,16 @@ const renderedMd = computed(() => {
   return DOMPurify.sanitize(marked.parse(repo.content.content, { async: false }));
 });
 
-/** Eclipse-style navigation: F3 / Ctrl+Shift+G / Ctrl+click run a repo-wide
- *  whole-word search for the symbol under the cursor; Ctrl+L is go-to-line. */
+// active ctrl-hover link clearers; a single global keyup empties them all
+const ctrlLinkClearers = new Set<() => void>();
+
+function onGlobalKeyUp(e: KeyboardEvent) {
+  if (e.key === "Control") for (const clear of ctrlLinkClearers) clear();
+}
+
+/** Eclipse/IDEA navigation: F3 / Ctrl+B jump to symbol, Ctrl+Shift+G / Alt+F7
+ *  find references (repo-wide whole-word search), Ctrl+L go-to-line.
+ *  Holding Ctrl turns the hovered symbol into an IDEA-style underlined link. */
 function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
   const symbolSearch = () => {
     const pos = ed.getPosition();
@@ -47,23 +55,26 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
     if (word) openSearch(word, true);
   };
   ed.addAction({
-    id: "eclipse-open-declaration",
+    id: "open-declaration",
     label: "跳转到符号（全仓库）",
-    keybindings: [monaco.KeyCode.F3],
+    keybindings: [monaco.KeyCode.F3, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB],
     contextMenuGroupId: "navigation",
     contextMenuOrder: 1,
     run: symbolSearch,
   });
   ed.addAction({
-    id: "eclipse-find-references",
+    id: "find-references",
     label: "查找引用（全仓库）",
-    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyG],
+    keybindings: [
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyG,
+      monaco.KeyMod.Alt | monaco.KeyCode.F7,
+    ],
     contextMenuGroupId: "navigation",
     contextMenuOrder: 2,
     run: symbolSearch,
   });
   ed.addAction({
-    id: "eclipse-goto-line",
+    id: "goto-line-alias",
     label: "转到行",
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
     run: () => {
@@ -71,10 +82,43 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
       ed.getAction("editor.action.gotoLine")?.run();
     },
   });
+
+  // IDEA-style ctrl+hover: underline the symbol under the cursor as a link
+  const linkDeco = ed.createDecorationsCollection([]);
+  let linkKey = "";
+  const clearLink = () => {
+    if (!linkKey) return;
+    linkKey = "";
+    linkDeco.set([]);
+  };
+  ctrlLinkClearers.add(clearLink);
+  ed.onMouseMove((e) => {
+    if (!e.event.ctrlKey || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) {
+      clearLink();
+      return;
+    }
+    const pos = e.target.position;
+    const word = pos && ed.getModel()?.getWordAtPosition(pos);
+    if (!pos || !word) {
+      clearLink();
+      return;
+    }
+    const key = `${pos.lineNumber}:${word.startColumn}:${word.word}`;
+    if (key === linkKey) return;
+    linkKey = key;
+    linkDeco.set([
+      {
+        range: new monaco.Range(pos.lineNumber, word.startColumn, pos.lineNumber, word.endColumn),
+        options: { inlineClassName: "symbol-link" },
+      },
+    ]);
+  });
+  ed.onMouseLeave(clearLink);
   ed.onMouseDown((e) => {
     if (!e.event.ctrlKey || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
     const pos = e.target.position;
     const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
+    clearLink();
     if (word) openSearch(word, true);
   });
 }
@@ -202,6 +246,7 @@ async function onRevertGlyphClick(line: number) {
 }
 
 onMounted(() => {
+  window.addEventListener("keyup", onGlobalKeyUp);
   editor = monaco.editor.createDiffEditor(container.value!, {
     readOnly: true,
     originalEditable: false,
@@ -249,6 +294,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keyup", onGlobalKeyUp);
+  ctrlLinkClearers.clear();
   clearView();
   editor?.dispose();
   editor = null;
