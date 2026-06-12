@@ -1,10 +1,10 @@
 import { reactive } from "vue";
 import type { SearchHit } from "./api";
 
-/** quick-open popup, bottom search tool-panel, inline symbol chooser */
+/** quick-open popup, find-in-files dialog, inline symbol chooser */
 export const palette = reactive({
   quickOpen: false,
-  bottom: {
+  find: {
     open: false,
     query: "",
     wholeWord: false,
@@ -24,12 +24,12 @@ export function openQuickOpen() {
   palette.quickOpen = true;
 }
 
-/** IDEA-style Find tool window at the bottom; non-modal */
-export function openBottomSearch(query = "", wholeWord = false) {
-  palette.bottom.query = query;
-  palette.bottom.wholeWord = wholeWord;
-  palette.bottom.open = true;
-  if (query) palette.bottom.runId++;
+/** IDEA-style Find in Files dialog with preview pane */
+export function openFindDialog(query = "", wholeWord = false) {
+  palette.find.query = query;
+  palette.find.wholeWord = wholeWord;
+  palette.find.open = true;
+  if (query) palette.find.runId++;
 }
 
 /** IDEA-style inline declaration chooser at the cursor position */

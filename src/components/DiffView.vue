@@ -7,7 +7,7 @@ import { languageForPath, monaco } from "../monaco/setup";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
-import { openBottomSearch, openChooser } from "../lib/palette";
+import { openFindDialog, openChooser } from "../lib/palette";
 import { api, type Hunk } from "../lib/api";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
@@ -23,6 +23,16 @@ let models: monaco.editor.ITextModel[] = [];
 let decorations: monaco.editor.IEditorDecorationsCollection | null = null;
 // glyph-margin line -> hunk, for the gutter revert icons
 const glyphHunks = new Map<number, Hunk>();
+// view identity of what's currently in the editor; same key = update in place
+let renderedKey: string | null = null;
+
+/** update a model without rebuilding the editor; keeps scroll/cursor stable */
+function softSetValue(ed: monaco.editor.ICodeEditor | null, model: monaco.editor.ITextModel, value: string) {
+  if (model.getValue() === value) return;
+  const vs = ed?.saveViewState() ?? null;
+  model.setValue(value);
+  if (vs) ed?.restoreViewState(vs);
+}
 
 const contentMode = computed(() => !!repo.content && !repo.diff);
 
@@ -106,7 +116,7 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
     contextMenuOrder: 2,
     run: () => {
       const word = wordAtCursor();
-      if (word) openBottomSearch(word, true);
+      if (word) openFindDialog(word, true);
     },
   });
   ed.addAction({
@@ -193,6 +203,7 @@ const overlayText = computed(() => {
 });
 
 function clearView() {
+  renderedKey = null;
   glyphHunks.clear();
   decorations?.clear();
   decorations = null;
@@ -225,50 +236,82 @@ function renderContent() {
   revealPendingLine(plainEditor);
 }
 
-function render() {
+function rebuildHunkDecorations() {
   if (!editor) return;
-  clearView();
-  if (contentMode.value) {
-    renderContent();
-    return;
-  }
   const d = repo.diff;
   const f = repo.selected;
-  const diffPath = repo.selectedCommitPath ?? f?.path;
-  if (!d || !diffPath || d.isBinary || d.tooLarge) return;
+  const mod = editor.getModifiedEditor();
+  glyphHunks.clear();
+  decorations?.clear();
+  decorations = null;
+  // hunk-level revert only applies to working-tree content edits (f is null
+  // for history diffs); added/deleted/untracked revert whole from the list
+  if (!d || !f || !(f.kind === "modified" || f.kind === "renamed") || !d.hunks.length) return;
+  const decos: monaco.editor.IModelDeltaDecoration[] = [];
+  for (const h of d.hunks) {
+    // deletion-only hunks have newLines = 0 and newStart pointing before the cut
+    const line = Math.max(h.newStart, 1);
+    glyphHunks.set(line, h);
+    decos.push({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        glyphMarginClassName: "hunk-revert-glyph",
+        glyphMarginHoverMessage: { value: "还原此修改块（恢复为 HEAD 版本）" },
+      },
+    });
+    if (h.newLines > 0) {
+      decos.push({
+        range: new monaco.Range(h.newStart, 1, h.newStart + h.newLines - 1, 1),
+        options: { linesDecorationsClassName: "hunk-range-marker" },
+      });
+    }
+  }
+  decorations = mod.createDecorationsCollection(decos);
+}
 
+function render() {
+  if (!editor) return;
+  const key = (repo.activeTabId ?? "none") + (contentMode.value ? ":content" : ":diff");
+
+  if (contentMode.value) {
+    const c = repo.content;
+    // same tab refreshed (e.g. the file is being written to): update in place,
+    // no model rebuild, no flicker, scroll preserved
+    if (renderedKey === key && plainEditor?.getModel() && c?.content != null) {
+      softSetValue(plainEditor, plainEditor.getModel()!, c.content);
+      revealPendingLine(plainEditor);
+      return;
+    }
+    clearView();
+    renderContent();
+    renderedKey = key;
+    return;
+  }
+
+  const d = repo.diff;
+  const diffPath = repo.selectedCommitPath ?? repo.selected?.path;
+  if (!d || !diffPath || d.isBinary || d.tooLarge) {
+    clearView();
+    return;
+  }
+
+  if (renderedKey === key && models.length === 2) {
+    softSetValue(editor.getOriginalEditor(), models[0], d.original ?? "");
+    softSetValue(editor.getModifiedEditor(), models[1], d.modified ?? "");
+    rebuildHunkDecorations();
+    revealPendingLine(editor.getModifiedEditor());
+    return;
+  }
+
+  clearView();
   const lang = languageForPath(diffPath);
   const original = monaco.editor.createModel(d.original ?? "", lang);
   const modified = monaco.editor.createModel(d.modified ?? "", lang);
   models = [original, modified];
   editor.setModel({ original, modified });
+  renderedKey = key;
   revealPendingLine(editor.getModifiedEditor());
-
-  // hunk-level revert only applies to working-tree content edits (f is null
-  // for history diffs); added/deleted/untracked revert whole from the list
-  if (f && (f.kind === "modified" || f.kind === "renamed") && d.hunks.length > 0) {
-    const mod = editor.getModifiedEditor();
-    const decos: monaco.editor.IModelDeltaDecoration[] = [];
-    for (const h of d.hunks) {
-      // deletion-only hunks have newLines = 0 and newStart pointing before the cut
-      const line = Math.max(h.newStart, 1);
-      glyphHunks.set(line, h);
-      decos.push({
-        range: new monaco.Range(line, 1, line, 1),
-        options: {
-          glyphMarginClassName: "hunk-revert-glyph",
-          glyphMarginHoverMessage: { value: "还原此修改块（恢复为 HEAD 版本）" },
-        },
-      });
-      if (h.newLines > 0) {
-        decos.push({
-          range: new monaco.Range(h.newStart, 1, h.newStart + h.newLines - 1, 1),
-          options: { linesDecorationsClassName: "hunk-range-marker" },
-        });
-      }
-    }
-    decorations = mod.createDecorationsCollection(decos);
-  }
+  rebuildHunkDecorations();
 }
 
 async function onRevertGlyphClick(line: number) {

@@ -12,7 +12,7 @@ import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
 import SearchPanel from "./components/SearchPanel.vue";
 import SymbolChooser from "./components/SymbolChooser.vue";
-import { openQuickOpen, openBottomSearch } from "./lib/palette";
+import { openQuickOpen, openFindDialog } from "./lib/palette";
 import { useRepoStore } from "./stores/repo";
 import { useSettingsStore } from "./stores/settings";
 
@@ -48,7 +48,7 @@ function onGlobalKey(e: KeyboardEvent) {
   } else if (!e.shiftKey && !e.altKey && e.code === "KeyH") {
     e.preventDefault();
     e.stopPropagation();
-    openBottomSearch();
+    openFindDialog();
   }
 }
 
@@ -70,12 +70,12 @@ onMounted(async () => {
       <div class="center">
         <ViewTabs />
         <DiffView />
-        <SearchPanel />
       </div>
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
     <QuickOpen />
+    <SearchPanel />
     <SymbolChooser />
     <ConfirmDialog />
     <ToastHost />

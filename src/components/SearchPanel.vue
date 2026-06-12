@@ -8,18 +8,28 @@ import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
 
 const MAX = 500;
+const CONTEXT = 6;
 const repo = useRepoStore();
 const input = ref<HTMLInputElement | null>(null);
+const listEl = ref<HTMLElement | null>(null);
 const hits = ref<SearchHit[]>([]);
+const active = ref(0);
 const searching = ref(false);
 const searched = ref(false);
-const activePath = ref("");
-const activeLine = ref(0);
+const previewLines = ref<{ no: number; text: string }[]>([]);
+
+const fileCache = new Map<string, string[]>();
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+let runSeq = 0;
 
 watch(
-  () => palette.bottom.open,
+  () => palette.find.open,
   async (open) => {
     if (!open) return;
+    fileCache.clear();
+    hits.value = [];
+    previewLines.value = [];
+    searched.value = false;
     await nextTick();
     input.value?.focus();
     input.value?.select();
@@ -27,72 +37,156 @@ watch(
 );
 
 watch(
-  () => palette.bottom.runId,
+  () => palette.find.runId,
   () => {
-    if (palette.bottom.open && palette.bottom.query) run();
+    if (palette.find.open && palette.find.query) run();
+  },
+);
+
+// IDEA-style live search while typing
+watch(
+  () => [palette.find.query, palette.find.wholeWord],
+  () => {
+    if (!palette.find.open) return;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(run, 250);
   },
 );
 
 async function run() {
-  if (!repo.repo || !palette.bottom.query.trim()) return;
+  if (!repo.repo) return;
+  const q = palette.find.query;
+  if (!q.trim()) {
+    hits.value = [];
+    previewLines.value = [];
+    searched.value = false;
+    return;
+  }
+  const seq = ++runSeq;
   searching.value = true;
   try {
-    hits.value = await api.searchText(repo.repo.root, palette.bottom.query, palette.bottom.wholeWord, MAX);
+    const result = await api.searchText(repo.repo.root, q, palette.find.wholeWord, MAX);
+    if (seq !== runSeq) return; // a newer search superseded this one
+    hits.value = result;
+    active.value = 0;
     searched.value = true;
+    loadPreview();
   } catch (e) {
     toast(String(e), "error");
   } finally {
-    searching.value = false;
+    if (seq === runSeq) searching.value = false;
   }
 }
 
-/** IDEA Find tool window behavior: panel stays open, clicks navigate */
+async function loadPreview() {
+  const h = hits.value[active.value];
+  if (!h || !repo.repo) {
+    previewLines.value = [];
+    return;
+  }
+  let lines = fileCache.get(h.path);
+  if (!lines) {
+    try {
+      const c = await api.readFile(repo.repo.root, h.path);
+      lines = (c.content ?? "").split("\n");
+    } catch {
+      lines = [];
+    }
+    fileCache.set(h.path, lines);
+  }
+  const start = Math.max(1, h.line - CONTEXT);
+  const end = Math.min(lines.length, h.line + CONTEXT);
+  previewLines.value = lines.slice(start - 1, end).map((text, i) => ({ no: start + i, text }));
+}
+
+watch(active, () => {
+  loadPreview();
+  // keep the active row in view
+  nextTick(() => listEl.value?.querySelector("li.active")?.scrollIntoView({ block: "nearest" }));
+});
+
 function pick(h: SearchHit) {
-  activePath.value = h.path;
-  activeLine.value = h.line;
+  palette.find.open = false;
   repo.openAtLine(h.path, h.line);
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === "Enter") run();
-  else if (e.key === "Escape") palette.bottom.open = false;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    active.value = Math.min(active.value + 1, hits.value.length - 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    active.value = Math.max(active.value - 1, 0);
+  } else if (e.key === "Enter") {
+    const h = hits.value[active.value];
+    if (h) pick(h);
+  } else if (e.key === "Escape") {
+    palette.find.open = false;
+  }
 }
+
+/** split a result line around the match so the template can <mark> it */
+function highlight(text: string): { pre: string; match: string; post: string } {
+  const t = text.trim();
+  const i = t.toLowerCase().indexOf(palette.find.query.toLowerCase());
+  if (i < 0) return { pre: t, match: "", post: "" };
+  return { pre: t.slice(0, i), match: t.slice(i, i + palette.find.query.length), post: t.slice(i + palette.find.query.length) };
+}
+
+const activeHit = () => hits.value[active.value];
 </script>
 
 <template>
-  <section v-if="palette.bottom.open" class="bottom-search">
-    <div class="bs-bar">
-      <input
-        ref="input"
-        v-model="palette.bottom.query"
-        placeholder="在仓库中搜索（回车执行，Esc 关闭）"
-        spellcheck="false"
-        @keydown="onKey"
-      />
-      <label class="word-toggle">
-        <input v-model="palette.bottom.wholeWord" type="checkbox" />
-        全字匹配
-      </label>
-      <span class="bs-status">
-        <Spinner v-if="searching" :size="14" />
-        <template v-else-if="searched">
-          {{ hits.length }} 个结果{{ hits.length >= MAX ? `（前 ${MAX} 条）` : "" }}
-        </template>
-      </span>
-      <button class="bs-close" title="关闭（Esc）" @click="palette.bottom.open = false">✕</button>
+  <Teleport to="body">
+    <div v-if="palette.find.open" class="palette-mask" @mousedown.self="palette.find.open = false">
+      <div class="find-dialog">
+        <div class="find-bar">
+          <input
+            ref="input"
+            v-model="palette.find.query"
+            placeholder="在仓库中查找（↑↓ 选择，回车打开，Esc 关闭）"
+            spellcheck="false"
+            @keydown="onKey"
+          />
+          <label class="word-toggle">
+            <input v-model="palette.find.wholeWord" type="checkbox" />
+            全字匹配
+          </label>
+          <span class="find-status">
+            <Spinner v-if="searching" :size="14" />
+            <template v-else-if="searched">{{ hits.length }}{{ hits.length >= MAX ? "+" : "" }} 个结果</template>
+          </span>
+        </div>
+        <ul ref="listEl" class="find-list">
+          <li
+            v-for="(h, i) in hits"
+            :key="i"
+            :class="{ active: i === active }"
+            @click="active = i"
+            @dblclick="pick(h)"
+          >
+            <img class="vicon" :src="fileIcon(h.path)" alt="" />
+            <span class="ppath">{{ h.path }}<span class="pline">:{{ h.line }}</span></span>
+            <span class="ptext">
+              <template v-if="highlight(h.text).match">
+                {{ highlight(h.text).pre }}<mark>{{ highlight(h.text).match }}</mark>{{ highlight(h.text).post }}
+              </template>
+              <template v-else>{{ h.text.trim() }}</template>
+            </span>
+          </li>
+          <li v-if="searched && !hits.length" class="find-empty">没有找到匹配</li>
+        </ul>
+        <div v-if="previewLines.length && activeHit()" class="find-preview">
+          <div class="fp-title">{{ activeHit()!.path }}</div>
+          <pre><code><span
+            v-for="l in previewLines"
+            :key="l.no"
+            class="fp-line"
+            :class="{ hit: l.no === activeHit()!.line }"
+          ><span class="fp-no">{{ l.no }}</span>{{ l.text }}
+</span></code></pre>
+        </div>
+      </div>
     </div>
-    <ul class="bs-list">
-      <li
-        v-for="(h, i) in hits"
-        :key="i"
-        :class="{ active: h.path === activePath && h.line === activeLine }"
-        @click="pick(h)"
-      >
-        <img class="vicon" :src="fileIcon(h.path)" alt="" />
-        <span class="ppath">{{ h.path }}<span class="pline">:{{ h.line }}</span></span>
-        <span class="ptext">{{ h.text.trim() }}</span>
-      </li>
-      <li v-if="searched && !hits.length" class="bs-empty">没有找到匹配</li>
-    </ul>
-  </section>
+  </Teleport>
 </template>

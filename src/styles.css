@@ -892,15 +892,24 @@ input[type="checkbox"] {
   right: 22px;
   z-index: 10;
   display: flex;
-  gap: 2px;
+  gap: 0;
   padding: 2px;
   background: var(--bg-active);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
 
+/* connected segments: only the outer corners are rounded */
 .md-toggle button {
-  border-radius: 6px;
+  border-radius: 0;
+}
+
+.md-toggle button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.md-toggle button:last-child {
+  border-radius: 0 6px 6px 0;
 }
 
 .md-toggle button.active {
@@ -1156,73 +1165,58 @@ input[type="checkbox"] {
   background: transparent !important;
 }
 
-/* ---------- bottom search tool panel (IDEA Find window style) ---------- */
-.bottom-search {
-  flex: none;
-  height: 260px;
+/* ---------- find-in-files dialog (IDEA style: list + preview) ---------- */
+.find-dialog {
+  width: min(920px, 88vw);
+  height: min(640px, 82vh);
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.08);
+  background: var(--bg-panel);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  animation: modal-in 0.14s ease;
+  overflow: hidden;
 }
 
-.bs-bar {
+.find-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px 4px;
+  padding: 10px 14px;
   flex: none;
 }
 
-.bs-bar input[type="text"],
-.bs-bar input:not([type]) {
+.find-bar input:not([type="checkbox"]) {
   flex: 1;
   border: none;
   outline: none;
-  background: var(--bg-panel);
+  background: var(--bg);
   color: var(--fg);
-  font-size: 13px;
+  font-size: 14px;
   font-family: inherit;
-  padding: 7px 12px;
-  border-radius: 7px;
-  box-shadow: var(--shadow);
+  padding: 8px 12px;
+  border-radius: 8px;
 }
 
-.bs-status {
+.find-status {
   flex: none;
   color: var(--fg-muted);
   font-size: 12px;
-  min-width: 70px;
+  min-width: 80px;
   display: flex;
   justify-content: flex-end;
 }
 
-.bs-close {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--fg-muted);
-  font-size: 13px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.bs-close:hover {
-  background: var(--bg-active);
-  color: var(--fg);
-}
-
-.bs-list {
+.find-list {
   list-style: none;
   margin: 0;
-  padding: 4px 8px 8px;
+  padding: 2px 8px;
   overflow-y: auto;
   flex: 1;
+  border-top: 1px solid var(--border);
 }
 
-.bs-list li {
+.find-list li {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1232,22 +1226,24 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
-.bs-list li:hover {
-  background: var(--bg-hover);
+.find-list li.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 
-.bs-list li.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+.find-list mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
 }
 
-.bs-list .vicon,
+.find-list .vicon,
 .symbol-chooser .vicon {
   width: 15px;
   height: 15px;
   flex: none;
 }
 
-.bs-list .ppath,
+.find-list .ppath,
 .symbol-chooser .ppath {
   flex: none;
   max-width: 40%;
@@ -1257,12 +1253,12 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
-.bs-list .pline,
+.find-list .pline,
 .symbol-chooser .pline {
   color: var(--accent);
 }
 
-.bs-list .ptext,
+.find-list .ptext,
 .symbol-chooser .ptext {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1270,10 +1266,55 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
-.bs-empty {
+.find-empty {
   color: var(--fg-muted);
   justify-content: center;
   cursor: default !important;
+}
+
+.find-preview {
+  flex: none;
+  height: 220px;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.fp-title {
+  flex: none;
+  padding: 6px 14px 2px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.find-preview pre {
+  flex: 1;
+  margin: 0;
+  padding: 4px 0 10px;
+  overflow: auto;
+  font-family: Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.fp-line {
+  display: block;
+  padding: 0 14px;
+  white-space: pre;
+}
+
+.fp-line.hit {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.fp-no {
+  display: inline-block;
+  width: 44px;
+  color: var(--fg-muted);
+  text-align: right;
+  padding-right: 14px;
+  user-select: none;
 }
 
 /* ---------- inline symbol chooser (IDEA Choose Declaration style) ---------- */
