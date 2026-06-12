@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { languageForPath, monaco } from "../monaco/setup";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
@@ -19,6 +22,28 @@ let decorations: monaco.editor.IEditorDecorationsCollection | null = null;
 const glyphHunks = new Map<number, Hunk>();
 
 const contentMode = computed(() => !!repo.content && !repo.diff);
+
+// markdown-family files get a rendered preview with a source toggle
+const MD_EXTS = [".md", ".markdown", ".mdx"];
+const mdPreviewOn = ref(true);
+const isMarkdown = computed(() => {
+  const p = repo.selectedPath?.toLowerCase() ?? "";
+  return contentMode.value && MD_EXTS.some((e) => p.endsWith(e));
+});
+const showMdPreview = computed(() => isMarkdown.value && mdPreviewOn.value);
+const renderedMd = computed(() => {
+  if (!showMdPreview.value || repo.content?.content == null) return "";
+  return DOMPurify.sanitize(marked.parse(repo.content.content, { async: false }));
+});
+
+function onPreviewClick(e: MouseEvent) {
+  // external links leave the webview and open in the system browser
+  const a = (e.target as HTMLElement).closest("a");
+  if (!a) return;
+  e.preventDefault();
+  const href = a.getAttribute("href") ?? "";
+  if (/^https?:\/\//i.test(href)) openUrl(href);
+}
 
 const overlayText = computed(() => {
   if (!repo.repo) return "点击「打开项目」选择一个 git 仓库开始 review";
@@ -176,7 +201,12 @@ onBeforeUnmount(() => {
 <template>
   <section class="diff-pane">
     <div v-show="!contentMode" ref="container" class="editor"></div>
-    <div v-show="contentMode" ref="plainContainer" class="editor"></div>
+    <div v-show="contentMode && !showMdPreview" ref="plainContainer" class="editor"></div>
+    <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
+    <div v-if="isMarkdown" class="md-toggle">
+      <button :class="{ active: mdPreviewOn }" @click="mdPreviewOn = true">预览</button>
+      <button :class="{ active: !mdPreviewOn }" @click="mdPreviewOn = false">源码</button>
+    </div>
     <div v-if="overlayText" class="overlay">{{ overlayText }}</div>
   </section>
 </template>

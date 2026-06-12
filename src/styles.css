@@ -622,6 +622,97 @@ input[type="checkbox"] {
   color: var(--accent);
 }
 
+/* ---------- markdown preview ---------- */
+.md-preview {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 24px 36px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.md-preview h1,
+.md-preview h2 {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.md-preview a {
+  color: var(--accent);
+}
+
+.md-preview code {
+  background: var(--bg-active);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.md-preview pre {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.md-preview pre code {
+  background: none;
+  padding: 0;
+}
+
+.md-preview blockquote {
+  margin: 0;
+  padding: 2px 14px;
+  border-left: 4px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.md-preview table {
+  border-collapse: collapse;
+}
+
+.md-preview th,
+.md-preview td {
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+}
+
+.md-preview img {
+  max-width: 100%;
+}
+
+.md-toggle {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 10;
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.md-toggle button {
+  border: none;
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.md-toggle button.active {
+  background: var(--bg-active);
+  color: var(--fg);
+  font-weight: 600;
+}
+
 /* ---------- modal ---------- */
 .modal-mask {
   position: fixed;

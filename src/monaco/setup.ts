@@ -98,15 +98,50 @@ export function applyTheme(id: string) {
   document.documentElement.dataset.theme = kind;
 }
 
-/** File path -> Monaco language id, derived from Monaco's own extension registry. */
+/** Monaco ships no groovy/toml/etc — map common build & config formats to the
+ *  closest tokenizer so gradle/maven/npm/cargo projects all highlight. */
+const NAME_LANG: Record<string, string> = {
+  dockerfile: "dockerfile",
+  makefile: "shell",
+  gnumakefile: "shell",
+  "cmakelists.txt": "shell",
+  "pom.xml": "xml",
+  ".gitignore": "ini",
+  ".gitattributes": "ini",
+  ".gitmodules": "ini",
+  ".dockerignore": "ini",
+  ".npmrc": "ini",
+  ".editorconfig": "ini",
+  ".env": "ini",
+};
+
+const EXT_LANG: Record<string, string> = {
+  ".vue": "html",
+  ".svelte": "html",
+  ".gradle": "java", // groovy DSL: java tokens are the closest fit
+  ".groovy": "java",
+  ".kts": "kotlin",
+  ".toml": "ini",
+  ".lock": "ini",
+  ".properties": "ini",
+  ".conf": "ini",
+  ".cfg": "ini",
+  ".zsh": "shell",
+  ".jsonc": "json",
+  ".json5": "json",
+  ".mdx": "markdown",
+};
+
+/** File path -> Monaco language id, manual overrides first, then Monaco's registry. */
 export function languageForPath(path: string): string {
   const name = path.split("/").pop()!.toLowerCase();
-  if (name === "dockerfile" || name.startsWith("dockerfile.")) return "dockerfile";
+  if (NAME_LANG[name]) return NAME_LANG[name];
+  if (name.startsWith("dockerfile.")) return "dockerfile";
+  if (name.startsWith(".env.")) return "ini";
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return "plaintext";
   const ext = name.slice(dot);
-  // single-file-component formats highlight acceptably as html
-  if (ext === ".vue" || ext === ".svelte") return "html";
+  if (EXT_LANG[ext]) return EXT_LANG[ext];
   for (const lang of monaco.languages.getLanguages()) {
     if (lang.extensions?.some((e) => e.toLowerCase() === ext)) return lang.id;
   }

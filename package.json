@@ -19,6 +19,8 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-store": "^2.4.3",
+    "dompurify": "^3.4.9",
+    "marked": "^18.0.5",
     "material-icon-theme": "^5.35.0",
     "monaco-editor": "^0.55.1",
     "pinia": "^3.0.4",
