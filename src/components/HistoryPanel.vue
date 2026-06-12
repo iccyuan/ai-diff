@@ -15,7 +15,7 @@ const BADGE: Record<string, string> = {
   untracked: "U",
 };
 
-const COMMIT_ROW_PX = 52;
+const COMMIT_ROW_PX = 68;
 
 const AVATAR_COLORS = ["#0969da", "#2da44e", "#8250df", "#cf222e", "#d29922", "#0e7490", "#bf3989"];
 

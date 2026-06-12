@@ -16,6 +16,20 @@ let watcherHooked = false;
 // our own refreshes touch .git/index and would echo back as watcher events
 let suppressAutoRefreshUntil = 0;
 
+export interface ViewTab {
+  id: string;
+  title: string;
+  path: string;
+  /** commit hash for history tabs, null for working-tree / file-content tabs */
+  commit: string | null;
+  /** status snapshot needed by get_commit_file_diff */
+  file: FileStatus | null;
+}
+
+function basename(path: string): string {
+  return path.split("/").pop()!;
+}
+
 export const useRepoStore = defineStore("repo", {
   state: () => ({
     repo: null as RepoInfo | null,
@@ -38,6 +52,9 @@ export const useRepoStore = defineStore("repo", {
     // when set, the diff pane shows a historical commit's file (read-only)
     selectedCommit: null as string | null,
     selectedCommitPath: null as string | null,
+    // open viewer tabs
+    tabs: [] as ViewTab[],
+    activeTabId: null as string | null,
   }),
   getters: {
     selected(state): FileStatus | null {
@@ -59,6 +76,8 @@ export const useRepoStore = defineStore("repo", {
         this.commitFiles = {};
         this.selectedCommit = null;
         this.selectedCommitPath = null;
+        this.tabs = [];
+        this.activeTabId = null;
         await useSettingsStore().addRecent(info.root);
         await this.refresh();
         await api.watchRepo(info.root);
@@ -93,15 +112,10 @@ export const useRepoStore = defineStore("repo", {
           this.commits = list;
           this.commitsExhausted = list.length < count;
         }
-        const sel = this.files.find((f) => f.path === this.selectedPath);
-        if (sel) {
-          await this.loadDiff(sel);
-        } else if (this.mode === "all" && this.selectedPath && this.allFiles.includes(this.selectedPath)) {
-          await this.loadContent(this.selectedPath);
-        } else {
-          this.selectedPath = null;
-          this.diff = null;
-          this.content = null;
+        const active = this.tabs.find((t) => t.id === this.activeTabId);
+        if (active) {
+          // worktree tabs auto-degrade to read-only content once the file is clean
+          await this.loadForTab(active);
         }
       } catch (e) {
         toast(String(e), "error");
@@ -122,23 +136,75 @@ export const useRepoStore = defineStore("repo", {
       }
     },
     async selectFile(f: FileStatus) {
-      if (this.selectedPath === f.path && this.diff && !this.selectedCommit) return;
-      this.selectedCommit = null;
-      this.selectedCommitPath = null;
-      this.selectedPath = f.path;
-      await this.loadDiff(f);
+      await this.selectPath(f.path);
     },
-    /** all-files view: changed files open as diff, the rest as read-only content */
+    /** open (or focus) a working-tree tab: changed files show a diff, clean files read-only content */
     async selectPath(path: string) {
-      if (this.selectedPath === path && !this.selectedCommit) return;
-      this.selectedCommit = null;
-      this.selectedCommitPath = null;
-      this.selectedPath = path;
-      const st = this.files.find((f) => f.path === path);
+      await this.openTab({
+        id: `wt:${path}`,
+        title: basename(path),
+        path,
+        commit: null,
+        file: null,
+      });
+    },
+    /** ----- viewer tabs ----- */
+    async openTab(tab: ViewTab) {
+      if (!this.tabs.some((t) => t.id === tab.id)) this.tabs.push(tab);
+      await this.activateTab(tab.id);
+    },
+    async activateTab(id: string) {
+      const tab = this.tabs.find((t) => t.id === id);
+      if (!tab) return;
+      this.activeTabId = id;
+      if (tab.commit) {
+        this.selectedPath = null;
+        this.selectedCommit = tab.commit;
+        this.selectedCommitPath = tab.path;
+      } else {
+        this.selectedCommit = null;
+        this.selectedCommitPath = null;
+        this.selectedPath = tab.path;
+      }
+      await this.loadForTab(tab);
+    },
+    async loadForTab(tab: ViewTab) {
+      if (!this.repo) return;
+      if (tab.commit && tab.file) {
+        this.loadingDiff = true;
+        this.content = null;
+        try {
+          this.diff = await api.getCommitFileDiff(this.repo.root, tab.commit, tab.file);
+        } catch (e) {
+          this.diff = null;
+          toast(String(e), "error");
+        } finally {
+          this.loadingDiff = false;
+        }
+        return;
+      }
+      const st = this.files.find((f) => f.path === tab.path);
       if (st) {
         await this.loadDiff(st);
       } else {
-        await this.loadContent(path);
+        await this.loadContent(tab.path);
+      }
+    },
+    closeTab(id: string) {
+      const i = this.tabs.findIndex((t) => t.id === id);
+      if (i < 0) return;
+      this.tabs.splice(i, 1);
+      if (this.activeTabId !== id) return;
+      const next = this.tabs[i] ?? this.tabs[i - 1];
+      if (next) {
+        this.activateTab(next.id);
+      } else {
+        this.activeTabId = null;
+        this.selectedPath = null;
+        this.selectedCommit = null;
+        this.selectedCommitPath = null;
+        this.diff = null;
+        this.content = null;
       }
     },
     /** history panel actions */
@@ -184,20 +250,13 @@ export const useRepoStore = defineStore("repo", {
       }
     },
     async selectCommitFile(hash: string, f: FileStatus) {
-      if (!this.repo) return;
-      this.selectedPath = null;
-      this.selectedCommit = hash;
-      this.selectedCommitPath = f.path;
-      this.loadingDiff = true;
-      this.content = null;
-      try {
-        this.diff = await api.getCommitFileDiff(this.repo.root, hash, f);
-      } catch (e) {
-        this.diff = null;
-        toast(String(e), "error");
-      } finally {
-        this.loadingDiff = false;
-      }
+      await this.openTab({
+        id: `${hash.slice(0, 12)}:${f.path}`,
+        title: basename(f.path),
+        path: f.path,
+        commit: hash,
+        file: f,
+      });
     },
     async loadDiff(f: FileStatus) {
       if (!this.repo) return;

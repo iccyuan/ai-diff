@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
+import ViewTabs from "./components/ViewTabs.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
@@ -47,7 +48,10 @@ onMounted(async () => {
     <div class="body">
       <FileList />
       <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
-      <DiffView />
+      <div class="center">
+        <ViewTabs />
+        <DiffView />
+      </div>
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />

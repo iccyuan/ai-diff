@@ -451,6 +451,97 @@ input[type="checkbox"] {
   background: var(--bg-active);
 }
 
+/* ---------- center column: tabs + diff ---------- */
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.view-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.vtab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  max-width: 200px;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.vtab:hover {
+  background: var(--bg-hover);
+}
+
+.vtab.active {
+  background: var(--bg-panel);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
+.vtab .vicon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.vtab .vtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+}
+
+.vtab .vhash {
+  flex: none;
+  font-family: Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.vtab .vclose {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.1s ease,
+    background 0.1s ease;
+}
+
+.vtab:hover .vclose,
+.vtab.active .vclose {
+  opacity: 1;
+}
+
+.vtab .vclose:hover {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
 /* ---------- diff pane ---------- */
 .diff-pane {
   flex: 1;
@@ -543,26 +634,26 @@ input[type="checkbox"] {
 .commit-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  padding: 7px 8px 7px 4px;
-  margin: 1px 0;
-  border-radius: 8px;
+  gap: 9px;
+  padding: 11px 10px 11px 6px;
+  margin: 2px 0;
+  border-radius: 9px;
   cursor: pointer;
   transition: background 0.1s ease;
 }
 
 .commit-row .avatar {
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  margin-top: 2px;
+  margin-top: 1px;
   user-select: none;
 }
 
@@ -583,14 +674,16 @@ input[type="checkbox"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13.5px;
+  line-height: 1.4;
 }
 
 .commit-main .meta {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   color: var(--fg-muted);
-  font-size: 11px;
-  margin-top: 2px;
+  font-size: 11.5px;
+  margin-top: 5px;
   align-items: center;
 }
 
@@ -619,9 +712,10 @@ input[type="checkbox"] {
 .commit-files li {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 10px 4px 30px;
-  border-radius: 6px;
+  gap: 8px;
+  padding: 6px 10px 6px 36px;
+  margin: 1px 0;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
 }

@@ -56,6 +56,7 @@ const overlayText = computed(() => {
   if (repo.diff?.tooLarge) return "文件超过 5MB，不显示 diff（仍可在左侧整体还原）";
   if (repo.content?.isBinary) return "二进制文件，无法预览";
   if (repo.content?.tooLarge) return "文件超过 5MB，不显示内容";
+  if (!repo.loadingDiff && !repo.diff && !repo.content) return "文件不存在或无法读取";
   return "";
 });
 
