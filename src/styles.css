@@ -32,10 +32,11 @@
   box-sizing: border-box;
 }
 
-/* slim, theme-aware scrollbars for the app chrome (file list, modals) */
+/* macOS-style overlay scrollbars: invisible until the container is hovered,
+   then a slim translucent rounded thumb floats over the content */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 12px;
+  height: 12px;
 }
 
 ::-webkit-scrollbar-track {
@@ -43,16 +44,28 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+  background: transparent;
+  border: 3px solid transparent;
+  border-radius: 8px;
+  background-clip: content-box;
+}
+
+:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--fg-muted) 38%, transparent);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-muted);
+  background-color: color-mix(in srgb, var(--fg-muted) 60%, transparent);
+  border-width: 2px;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* round Monaco's own scrollbar sliders to match (colors stay theme-driven) */
+.monaco-scrollable-element > .scrollbar > .slider {
+  border-radius: 6px;
 }
 
 html,
