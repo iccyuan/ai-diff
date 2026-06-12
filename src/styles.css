@@ -28,7 +28,9 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
-* {
+/* border-box for app chrome, but never inside Monaco: its layout math
+   (diff view zones like the "N hidden lines" banner) assumes content-box */
+*:not(.monaco-editor *, .monaco-diff-editor *) {
   box-sizing: border-box;
 }
 
@@ -120,15 +122,63 @@ body {
   flex: 1;
 }
 
-.repo-info {
+/* open-project switcher chips */
+.ws-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin-left: 6px;
   min-width: 0;
-  background: var(--bg-hover);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ws-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px 5px 12px;
   border-radius: 7px;
-  padding: 5px 12px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.ws-tab:hover {
+  background: var(--bg-hover);
+}
+
+.ws-tab.active {
+  background: var(--bg-panel);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+}
+
+.ws-tab .vclose {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.ws-tab:hover .vclose,
+.ws-tab.active .vclose {
+  opacity: 1;
+}
+
+.ws-tab .vclose:hover {
+  background: var(--bg-active);
+  color: var(--fg);
 }
 
 .repo-name {
@@ -464,8 +514,10 @@ input[type="checkbox"] {
   background: var(--bg-active);
 }
 
-/* ---------- center column: tabs + diff ---------- */
-.center {
+/* ---------- center column: tabs + diff ----------
+   NOTE: not named ".center" — Monaco uses that class inside its own
+   diff widgets (e.g. the hidden-lines banner) and inherits page CSS */
+.center-col {
   flex: 1;
   display: flex;
   flex-direction: column;

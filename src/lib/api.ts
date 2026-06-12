@@ -62,6 +62,7 @@ export const api = {
     invoke<void>("revert_hunk", { repo, path, patch }),
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
+  unwatchRepo: (repo: string) => invoke<void>("unwatch_repo", { repo }),
   listFiles: (repo: string) => invoke<string[]>("list_files", { repo }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
   logCommits: (repo: string, skip: number, count: number) =>

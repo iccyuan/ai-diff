@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
@@ -13,6 +14,10 @@ const recentSel = ref("");
 async function pickFolder() {
   const dir = await open({ directory: true, title: "选择 git 仓库目录" });
   if (typeof dir === "string") await repo.openRepo(dir);
+}
+
+function newWindow() {
+  invoke("new_window");
 }
 
 async function openRecent() {
@@ -38,15 +43,27 @@ function repoName(root: string): string {
 <template>
   <header class="toolbar">
     <button class="btn primary" @click="pickFolder">打开项目</button>
+    <button class="btn icon" title="新窗口（同时查看多个项目）" @click="newWindow">⧉</button>
     <select v-if="settings.recentRepos.length" v-model="recentSel" class="recent" @change="openRecent">
       <option value="" disabled>最近打开…</option>
       <option v-for="p in settings.recentRepos" :key="p" :value="p">{{ p }}</option>
     </select>
 
-    <div v-if="repo.repo" class="repo-info">
-      <span class="repo-name">{{ repoName(repo.repo.root) }}</span>
-      <span v-if="repo.repo.branch" class="branch">⎇ {{ repo.repo.branch }}</span>
-      <span v-else-if="!repo.repo.hasHead" class="branch warn">空仓库（无提交）</span>
+    <div v-if="repo.workspaces.length" class="ws-tabs">
+      <div
+        v-for="(w, i) in repo.workspaces"
+        :key="w.repo.root"
+        class="ws-tab"
+        :class="{ active: i === repo.active }"
+        :title="w.repo.root"
+        @click="repo.activateWorkspace(i)"
+        @mousedown.middle.prevent="repo.closeWorkspace(i)"
+      >
+        <span class="repo-name">{{ repoName(w.repo.root) }}</span>
+        <span v-if="i === repo.active && w.repo.branch" class="branch">⎇ {{ w.repo.branch }}</span>
+        <span v-else-if="i === repo.active && !w.repo.hasHead" class="branch warn">空仓库</span>
+        <button class="vclose" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
+      </div>
     </div>
 
     <div class="spacer"></div>

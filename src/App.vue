@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
@@ -53,7 +55,16 @@ function onGlobalKey(e: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  // the window starts hidden (tauri.conf visible:false) and is revealed only
+  // after Vue mounted with the persisted theme applied — no startup flash
+  getCurrentWindow().show().catch(() => {});
   window.addEventListener("keydown", onGlobalKey, true);
+  // drag a folder (or any file inside a repo) onto the window to open it
+  await getCurrentWebview().onDragDropEvent((e) => {
+    if (e.payload.type === "drop" && e.payload.paths.length) {
+      repo.openRepo(e.payload.paths[0]);
+    }
+  });
   // `AI_DIFF_OPEN_REPO=<path>` (or legacy VITE_OPEN_REPO) opens a repo on launch;
   // resolved by the Rust side so it works regardless of vite env plumbing
   const auto = await invoke<string | null>("auto_open_path");
@@ -67,7 +78,7 @@ onMounted(async () => {
     <div class="body">
       <FileList />
       <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
-      <div class="center">
+      <div class="center-col">
         <ViewTabs />
         <DiffView />
       </div>

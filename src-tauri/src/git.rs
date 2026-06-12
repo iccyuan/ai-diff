@@ -375,9 +375,13 @@ pub fn search_text(
 }
 
 /// repo to open on launch, from AI_DIFF_OPEN_REPO (or legacy VITE_OPEN_REPO);
-/// read on the Rust side so it works regardless of how vite resolves env
+/// read on the Rust side so it works regardless of how vite resolves env.
+/// Only the main window auto-opens — extra windows start empty.
 #[tauri::command]
-pub fn auto_open_path() -> Option<String> {
+pub fn auto_open_path(window: tauri::Window) -> Option<String> {
+    if window.label() != "main" {
+        return None;
+    }
     std::env::var("AI_DIFF_OPEN_REPO")
         .or_else(|_| std::env::var("VITE_OPEN_REPO"))
         .ok()
@@ -386,7 +390,13 @@ pub fn auto_open_path() -> Option<String> {
 
 #[tauri::command]
 pub fn open_repo(path: String) -> Result<RepoInfo, String> {
-    let p = PathBuf::from(&path);
+    let mut p = PathBuf::from(&path);
+    // dropping a file counts as its directory; rev-parse walks up to the root
+    if p.is_file() {
+        if let Some(parent) = p.parent() {
+            p = parent.to_path_buf();
+        }
+    }
     if !p.is_dir() {
         return Err(format!("目录不存在: {path}"));
     }

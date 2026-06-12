@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      /* proposed fix: reset everything except Monaco's subtree */
+      *:not(.monaco-editor *, .monaco-diff-editor *) {
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body style="background: #fff; margin: 0">
+    <div id="a" style="height: 250px; width: 980px"></div>
+    <script type="module">
+      import { monaco } from "/src/monaco/setup.ts";
+      const orig = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join("\n");
+      const mod = orig.replace("line2", "LINE2-EDIT").replace("line16", "LINE16-EDIT");
+      const ed = monaco.editor.createDiffEditor(document.getElementById("a"), {
+        readOnly: true,
+        renderSideBySide: true,
+        hideUnchangedRegions: { enabled: true },
+        automaticLayout: true,
+        fontSize: 13,
+        fontFamily: '"JetBrains Mono", "Microsoft YaHei", monospace',
+        renderOverviewRuler: false,
+        minimap: { enabled: false },
+      });
+      ed.setModel({
+        original: monaco.editor.createModel(orig, "plaintext"),
+        modified: monaco.editor.createModel(mod, "plaintext"),
+      });
+    </script>
+  </body>
+</html>

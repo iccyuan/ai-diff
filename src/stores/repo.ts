@@ -26,123 +26,236 @@ export interface ViewTab {
   file: FileStatus | null;
 }
 
+/** everything one open project needs; the window can hold several of these */
+export interface Workspace {
+  repo: RepoInfo;
+  files: FileStatus[];
+  allFiles: string[];
+  mode: "changes" | "all";
+  selectedPath: string | null;
+  diff: FileDiff | null;
+  content: FileContent | null;
+  loadingStatus: boolean;
+  loadingDiff: boolean;
+  historyOpen: boolean;
+  commitPageSize: number;
+  commits: CommitInfo[];
+  commitsExhausted: boolean;
+  loadingCommits: boolean;
+  expandedCommits: string[];
+  commitFiles: Record<string, FileStatus[]>;
+  selectedCommit: string | null;
+  selectedCommitPath: string | null;
+  tabs: ViewTab[];
+  activeTabId: string | null;
+  pendingRevealLine: number | null;
+}
+
+function blankWorkspace(info: RepoInfo): Workspace {
+  return {
+    repo: info,
+    files: [],
+    allFiles: [],
+    mode: "changes",
+    selectedPath: null,
+    diff: null,
+    content: null,
+    loadingStatus: false,
+    loadingDiff: false,
+    historyOpen: false,
+    commitPageSize: 30,
+    commits: [],
+    commitsExhausted: false,
+    loadingCommits: false,
+    expandedCommits: [],
+    commitFiles: {},
+    selectedCommit: null,
+    selectedCommitPath: null,
+    tabs: [],
+    activeTabId: null,
+    pendingRevealLine: null,
+  };
+}
+
 function basename(path: string): string {
   return path.split("/").pop()!;
 }
 
 export const useRepoStore = defineStore("repo", {
   state: () => ({
-    repo: null as RepoInfo | null,
-    files: [] as FileStatus[],
-    selectedPath: null as string | null,
-    diff: null as FileDiff | null,
-    loadingStatus: false,
-    loadingDiff: false,
-    mode: "changes" as "changes" | "all",
-    allFiles: [] as string[],
-    content: null as FileContent | null,
-    // commit history panel
-    historyOpen: true,
-    commitPageSize: 30,
-    commits: [] as CommitInfo[],
-    commitsExhausted: false,
-    loadingCommits: false,
-    expandedCommits: [] as string[],
-    commitFiles: {} as Record<string, FileStatus[]>,
-    // when set, the diff pane shows a historical commit's file (read-only)
-    selectedCommit: null as string | null,
-    selectedCommitPath: null as string | null,
-    // open viewer tabs
-    tabs: [] as ViewTab[],
-    activeTabId: null as string | null,
-    // consumed by DiffView after the next model load (search result jumps)
-    pendingRevealLine: null as number | null,
+    workspaces: [] as Workspace[],
+    active: -1,
   }),
   getters: {
-    selected(state): FileStatus | null {
-      return state.files.find((f) => f.path === state.selectedPath) ?? null;
+    ws(state): Workspace | null {
+      return state.workspaces[state.active] ?? null;
+    },
+    repo(): RepoInfo | null {
+      return this.ws?.repo ?? null;
+    },
+    files(): FileStatus[] {
+      return this.ws?.files ?? [];
+    },
+    allFiles(): string[] {
+      return this.ws?.allFiles ?? [];
+    },
+    mode(): "changes" | "all" {
+      return this.ws?.mode ?? "changes";
+    },
+    selectedPath(): string | null {
+      return this.ws?.selectedPath ?? null;
+    },
+    diff(): FileDiff | null {
+      return this.ws?.diff ?? null;
+    },
+    content(): FileContent | null {
+      return this.ws?.content ?? null;
+    },
+    loadingStatus(): boolean {
+      return this.ws?.loadingStatus ?? false;
+    },
+    loadingDiff(): boolean {
+      return this.ws?.loadingDiff ?? false;
+    },
+    historyOpen(): boolean {
+      return this.ws?.historyOpen ?? false;
+    },
+    commitPageSize(): number {
+      return this.ws?.commitPageSize ?? 30;
+    },
+    commits(): CommitInfo[] {
+      return this.ws?.commits ?? [];
+    },
+    commitsExhausted(): boolean {
+      return this.ws?.commitsExhausted ?? false;
+    },
+    loadingCommits(): boolean {
+      return this.ws?.loadingCommits ?? false;
+    },
+    expandedCommits(): string[] {
+      return this.ws?.expandedCommits ?? [];
+    },
+    commitFiles(): Record<string, FileStatus[]> {
+      return this.ws?.commitFiles ?? {};
+    },
+    selectedCommit(): string | null {
+      return this.ws?.selectedCommit ?? null;
+    },
+    selectedCommitPath(): string | null {
+      return this.ws?.selectedCommitPath ?? null;
+    },
+    tabs(): ViewTab[] {
+      return this.ws?.tabs ?? [];
+    },
+    activeTabId(): string | null {
+      return this.ws?.activeTabId ?? null;
+    },
+    pendingRevealLine(): number | null {
+      return this.ws?.pendingRevealLine ?? null;
+    },
+    selected(): FileStatus | null {
+      const w = this.ws;
+      return w?.files.find((f) => f.path === w.selectedPath) ?? null;
     },
   },
   actions: {
+    /** open a repo as a workspace; re-opening an existing one just activates it */
     async openRepo(path: string) {
       try {
         const info = await api.openRepo(path);
-        this.repo = info;
-        this.selectedPath = null;
-        this.diff = null;
-        this.content = null;
-        this.allFiles = [];
-        this.commits = [];
-        this.commitsExhausted = false;
-        this.expandedCommits = [];
-        this.commitFiles = {};
-        this.selectedCommit = null;
-        this.selectedCommitPath = null;
-        this.tabs = [];
-        this.activeTabId = null;
+        const existing = this.workspaces.findIndex((w) => w.repo.root === info.root);
+        if (existing >= 0) {
+          this.active = existing;
+          this.workspaces[existing].repo = info;
+          await this.refreshWs(this.workspaces[existing]);
+          return;
+        }
+        const w = blankWorkspace(info);
+        this.workspaces.push(w);
+        this.active = this.workspaces.length - 1;
         await useSettingsStore().addRecent(info.root);
-        await this.refresh();
+        await this.refreshWs(w);
         await api.watchRepo(info.root);
         if (!watcherHooked) {
           watcherHooked = true;
           await listen<string>("repo-changed", (e) => {
-            if (!this.repo || e.payload !== this.repo.root) return;
-            if (this.loadingStatus || Date.now() < suppressAutoRefreshUntil) return;
-            this.refresh();
+            const target = this.workspaces.find((x) => x.repo.root === e.payload);
+            if (!target || target.loadingStatus || Date.now() < suppressAutoRefreshUntil) return;
+            this.refreshWs(target);
           });
         }
       } catch (e) {
         toast(String(e), "error");
       }
     },
+    activateWorkspace(i: number) {
+      if (i >= 0 && i < this.workspaces.length) this.active = i;
+    },
+    closeWorkspace(i: number) {
+      const w = this.workspaces[i];
+      if (!w) return;
+      api.unwatchRepo(w.repo.root).catch(() => {});
+      this.workspaces.splice(i, 1);
+      if (this.active >= this.workspaces.length) this.active = this.workspaces.length - 1;
+      else if (this.active > i) this.active--;
+    },
+    async refresh() {
+      if (this.ws) await this.refreshWs(this.ws);
+    },
     /**
      * The single consistency rule: every mutation (any revert) must end here,
      * so hunk offsets are always re-derived from the current file state.
      */
-    async refresh() {
-      if (!this.repo) return;
-      this.loadingStatus = true;
+    async refreshWs(w: Workspace) {
+      w.loadingStatus = true;
       try {
-        this.files = await api.getStatus(this.repo.root);
-        if (this.mode === "all") {
-          this.allFiles = await api.listFiles(this.repo.root);
+        w.files = await api.getStatus(w.repo.root);
+        if (w.mode === "all") {
+          w.allFiles = await api.listFiles(w.repo.root);
         }
-        if (this.historyOpen) {
+        if (w.historyOpen) {
           // re-fetch the already-loaded depth so new commits surface on top
-          const count = Math.max(this.commits.length, this.commitPageSize);
-          const list = await api.logCommits(this.repo.root, 0, count);
-          this.commits = list;
-          this.commitsExhausted = list.length < count;
+          const count = Math.max(w.commits.length, w.commitPageSize);
+          const list = await api.logCommits(w.repo.root, 0, count);
+          w.commits = list;
+          w.commitsExhausted = list.length < count;
         }
-        const active = this.tabs.find((t) => t.id === this.activeTabId);
+        const active = w.tabs.find((t) => t.id === w.activeTabId);
         if (active) {
           // worktree tabs auto-degrade to read-only content once the file is clean
-          await this.loadForTab(active);
+          await this.loadForTab(w, active);
         }
       } catch (e) {
         toast(String(e), "error");
       } finally {
-        this.loadingStatus = false;
+        w.loadingStatus = false;
         suppressAutoRefreshUntil = Date.now() + 800;
       }
     },
     async setMode(mode: "changes" | "all") {
-      if (this.mode === mode) return;
-      this.mode = mode;
+      const w = this.ws;
+      if (!w || w.mode === mode) return;
+      w.mode = mode;
       if (mode === "all") await this.ensureAllFiles();
     },
     async ensureAllFiles() {
-      if (!this.repo || this.allFiles.length) return;
+      const w = this.ws;
+      if (!w || w.allFiles.length) return;
       try {
-        this.allFiles = await api.listFiles(this.repo.root);
+        w.allFiles = await api.listFiles(w.repo.root);
       } catch (e) {
         toast(String(e), "error");
       }
     },
     /** open a file (worktree view) and scroll to a specific line */
     async openAtLine(path: string, line: number) {
-      this.pendingRevealLine = line;
+      const w = this.ws;
+      if (!w) return;
+      w.pendingRevealLine = line;
       await this.selectPath(path);
+    },
+    clearPendingReveal() {
+      if (this.ws) this.ws.pendingRevealLine = null;
     },
     async selectFile(f: FileStatus) {
       await this.selectPath(f.path);
@@ -157,134 +270,6 @@ export const useRepoStore = defineStore("repo", {
         file: null,
       });
     },
-    /** ----- viewer tabs ----- */
-    async openTab(tab: ViewTab) {
-      if (!this.tabs.some((t) => t.id === tab.id)) this.tabs.push(tab);
-      await this.activateTab(tab.id);
-    },
-    async activateTab(id: string) {
-      const tab = this.tabs.find((t) => t.id === id);
-      if (!tab) return;
-      this.activeTabId = id;
-      if (tab.commit) {
-        this.selectedPath = null;
-        this.selectedCommit = tab.commit;
-        this.selectedCommitPath = tab.path;
-      } else {
-        this.selectedCommit = null;
-        this.selectedCommitPath = null;
-        this.selectedPath = tab.path;
-      }
-      await this.loadForTab(tab);
-    },
-    async loadForTab(tab: ViewTab) {
-      if (!this.repo) return;
-      if (tab.commit && tab.file) {
-        this.loadingDiff = true;
-        this.content = null;
-        try {
-          this.diff = await api.getCommitFileDiff(this.repo.root, tab.commit, tab.file);
-        } catch (e) {
-          this.diff = null;
-          toast(String(e), "error");
-        } finally {
-          this.loadingDiff = false;
-        }
-        return;
-      }
-      const st = this.files.find((f) => f.path === tab.path);
-      if (st) {
-        await this.loadDiff(st);
-      } else {
-        await this.loadContent(tab.path);
-      }
-    },
-    closeTab(id: string) {
-      const i = this.tabs.findIndex((t) => t.id === id);
-      if (i < 0) return;
-      this.tabs.splice(i, 1);
-      if (this.activeTabId !== id) return;
-      const next = this.tabs[i] ?? this.tabs[i - 1];
-      if (next) {
-        this.activateTab(next.id);
-      } else {
-        this.clearActiveView();
-      }
-    },
-    clearActiveView() {
-      this.activeTabId = null;
-      this.selectedPath = null;
-      this.selectedCommit = null;
-      this.selectedCommitPath = null;
-      this.diff = null;
-      this.content = null;
-    },
-    closeAllTabs() {
-      this.tabs = [];
-      this.clearActiveView();
-    },
-    closeOtherTabs(id: string) {
-      const keep = this.tabs.find((t) => t.id === id);
-      if (!keep) return;
-      this.tabs = [keep];
-      if (this.activeTabId !== id) this.activateTab(id);
-    },
-    closeLeftTabs(id: string) {
-      const i = this.tabs.findIndex((t) => t.id === id);
-      if (i <= 0) return;
-      const closingActive = this.tabs.slice(0, i).some((t) => t.id === this.activeTabId);
-      this.tabs = this.tabs.slice(i);
-      if (closingActive) this.activateTab(id);
-    },
-    closeRightTabs(id: string) {
-      const i = this.tabs.findIndex((t) => t.id === id);
-      if (i < 0 || i === this.tabs.length - 1) return;
-      const closingActive = this.tabs.slice(i + 1).some((t) => t.id === this.activeTabId);
-      this.tabs = this.tabs.slice(0, i + 1);
-      if (closingActive) this.activateTab(id);
-    },
-    /** history panel actions */
-    async toggleHistory() {
-      this.historyOpen = !this.historyOpen;
-      if (this.historyOpen && !this.commits.length) await this.loadCommits();
-    },
-    async loadCommits(reset = false) {
-      if (!this.repo || this.loadingCommits) return;
-      if (reset) {
-        this.commits = [];
-        this.commitsExhausted = false;
-        this.commitFiles = {};
-        this.expandedCommits = [];
-      }
-      if (this.commitsExhausted) return;
-      this.loadingCommits = true;
-      try {
-        // page size adapts to the panel height; caller passes via pageSize param-free heuristic
-        const count = this.commitPageSize;
-        const batch = await api.logCommits(this.repo.root, this.commits.length, count);
-        this.commits.push(...batch);
-        if (batch.length < count) this.commitsExhausted = true;
-      } catch (e) {
-        toast(String(e), "error");
-      } finally {
-        this.loadingCommits = false;
-      }
-    },
-    async toggleCommit(hash: string) {
-      const i = this.expandedCommits.indexOf(hash);
-      if (i >= 0) {
-        this.expandedCommits.splice(i, 1);
-        return;
-      }
-      this.expandedCommits.push(hash);
-      if (!this.commitFiles[hash] && this.repo) {
-        try {
-          this.commitFiles[hash] = await api.commitFiles(this.repo.root, hash);
-        } catch (e) {
-          toast(String(e), "error");
-        }
-      }
-    },
     async selectCommitFile(hash: string, f: FileStatus) {
       await this.openTab({
         id: `${hash.slice(0, 12)}:${f.path}`,
@@ -294,62 +279,212 @@ export const useRepoStore = defineStore("repo", {
         file: f,
       });
     },
-    async loadDiff(f: FileStatus) {
-      if (!this.repo) return;
-      this.loadingDiff = true;
-      this.content = null;
-      try {
-        this.diff = await api.getFileDiff(this.repo.root, f);
-      } catch (e) {
-        this.diff = null;
-        toast(String(e), "error");
-      } finally {
-        this.loadingDiff = false;
+    /** ----- viewer tabs ----- */
+    async openTab(tab: ViewTab) {
+      const w = this.ws;
+      if (!w) return;
+      if (!w.tabs.some((t) => t.id === tab.id)) w.tabs.push(tab);
+      await this.activateTab(tab.id);
+    },
+    async activateTab(id: string) {
+      const w = this.ws;
+      const tab = w?.tabs.find((t) => t.id === id);
+      if (!w || !tab) return;
+      w.activeTabId = id;
+      if (tab.commit) {
+        w.selectedPath = null;
+        w.selectedCommit = tab.commit;
+        w.selectedCommitPath = tab.path;
+      } else {
+        w.selectedCommit = null;
+        w.selectedCommitPath = null;
+        w.selectedPath = tab.path;
+      }
+      await this.loadForTab(w, tab);
+    },
+    async loadForTab(w: Workspace, tab: ViewTab) {
+      if (tab.commit && tab.file) {
+        w.loadingDiff = true;
+        w.content = null;
+        try {
+          w.diff = await api.getCommitFileDiff(w.repo.root, tab.commit, tab.file);
+        } catch (e) {
+          w.diff = null;
+          toast(String(e), "error");
+        } finally {
+          w.loadingDiff = false;
+        }
+        return;
+      }
+      const st = w.files.find((f) => f.path === tab.path);
+      if (st) {
+        await this.loadDiff(w, st);
+      } else {
+        await this.loadContent(w, tab.path);
       }
     },
-    async loadContent(path: string) {
-      if (!this.repo) return;
-      this.loadingDiff = true;
-      this.diff = null;
+    closeTab(id: string) {
+      const w = this.ws;
+      if (!w) return;
+      const i = w.tabs.findIndex((t) => t.id === id);
+      if (i < 0) return;
+      w.tabs.splice(i, 1);
+      if (w.activeTabId !== id) return;
+      const next = w.tabs[i] ?? w.tabs[i - 1];
+      if (next) {
+        this.activateTab(next.id);
+      } else {
+        this.clearActiveView();
+      }
+    },
+    clearActiveView() {
+      const w = this.ws;
+      if (!w) return;
+      w.activeTabId = null;
+      w.selectedPath = null;
+      w.selectedCommit = null;
+      w.selectedCommitPath = null;
+      w.diff = null;
+      w.content = null;
+    },
+    closeAllTabs() {
+      const w = this.ws;
+      if (!w) return;
+      w.tabs = [];
+      this.clearActiveView();
+    },
+    closeOtherTabs(id: string) {
+      const w = this.ws;
+      if (!w) return;
+      const keep = w.tabs.find((t) => t.id === id);
+      if (!keep) return;
+      w.tabs = [keep];
+      if (w.activeTabId !== id) this.activateTab(id);
+    },
+    closeLeftTabs(id: string) {
+      const w = this.ws;
+      if (!w) return;
+      const i = w.tabs.findIndex((t) => t.id === id);
+      if (i <= 0) return;
+      const closingActive = w.tabs.slice(0, i).some((t) => t.id === w.activeTabId);
+      w.tabs = w.tabs.slice(i);
+      if (closingActive) this.activateTab(id);
+    },
+    closeRightTabs(id: string) {
+      const w = this.ws;
+      if (!w) return;
+      const i = w.tabs.findIndex((t) => t.id === id);
+      if (i < 0 || i === w.tabs.length - 1) return;
+      const closingActive = w.tabs.slice(i + 1).some((t) => t.id === w.activeTabId);
+      w.tabs = w.tabs.slice(0, i + 1);
+      if (closingActive) this.activateTab(id);
+    },
+    async loadDiff(w: Workspace, f: FileStatus) {
+      w.loadingDiff = true;
+      w.content = null;
       try {
-        this.content = await api.readFile(this.repo.root, path);
+        w.diff = await api.getFileDiff(w.repo.root, f);
       } catch (e) {
-        this.content = null;
+        w.diff = null;
         toast(String(e), "error");
       } finally {
-        this.loadingDiff = false;
+        w.loadingDiff = false;
+      }
+    },
+    async loadContent(w: Workspace, path: string) {
+      w.loadingDiff = true;
+      w.diff = null;
+      try {
+        w.content = await api.readFile(w.repo.root, path);
+      } catch (e) {
+        w.content = null;
+        toast(String(e), "error");
+      } finally {
+        w.loadingDiff = false;
       }
     },
     async revertFile(f: FileStatus) {
-      if (!this.repo) return;
+      const w = this.ws;
+      if (!w) return;
       try {
-        await api.revertFile(this.repo.root, f);
+        await api.revertFile(w.repo.root, f);
         toast(f.kind === "untracked" ? `已删除 ${f.path}` : `已还原 ${f.path}`);
       } catch (e) {
         toast(String(e), "error");
       }
-      await this.refresh();
+      await this.refreshWs(w);
     },
     async revertHunk(hunk: Hunk) {
-      if (!this.repo || !this.diff || !this.selected) return;
-      const patch = this.diff.fileHeader + hunk.text;
+      const w = this.ws;
+      if (!w || !w.diff || !this.selected) return;
+      const patch = w.diff.fileHeader + hunk.text;
       try {
-        await api.revertHunk(this.repo.root, this.selected.path, patch);
+        await api.revertHunk(w.repo.root, this.selected.path, patch);
         toast("已还原该修改块");
       } catch (e) {
         toast(String(e), "error");
       }
-      await this.refresh();
+      await this.refreshWs(w);
     },
     async revertAll() {
-      if (!this.repo) return;
+      const w = this.ws;
+      if (!w) return;
       try {
-        await api.revertAll(this.repo.root);
+        await api.revertAll(w.repo.root);
         toast("已还原全部更改");
       } catch (e) {
         toast(String(e), "error");
       }
-      await this.refresh();
+      await this.refreshWs(w);
+    },
+    /** ----- history panel ----- */
+    async toggleHistory() {
+      const w = this.ws;
+      if (!w) return;
+      w.historyOpen = !w.historyOpen;
+      if (w.historyOpen && !w.commits.length) await this.loadCommits();
+    },
+    setCommitPageSize(n: number) {
+      if (this.ws) this.ws.commitPageSize = n;
+    },
+    async loadCommits(reset = false) {
+      const w = this.ws;
+      if (!w || w.loadingCommits) return;
+      if (reset) {
+        w.commits = [];
+        w.commitsExhausted = false;
+        w.commitFiles = {};
+        w.expandedCommits = [];
+      }
+      if (w.commitsExhausted) return;
+      w.loadingCommits = true;
+      try {
+        const count = w.commitPageSize;
+        const batch = await api.logCommits(w.repo.root, w.commits.length, count);
+        w.commits.push(...batch);
+        if (batch.length < count) w.commitsExhausted = true;
+      } catch (e) {
+        toast(String(e), "error");
+      } finally {
+        w.loadingCommits = false;
+      }
+    },
+    async toggleCommit(hash: string) {
+      const w = this.ws;
+      if (!w) return;
+      const i = w.expandedCommits.indexOf(hash);
+      if (i >= 0) {
+        w.expandedCommits.splice(i, 1);
+        return;
+      }
+      w.expandedCommits.push(hash);
+      if (!w.commitFiles[hash]) {
+        try {
+          w.commitFiles[hash] = await api.commitFiles(w.repo.root, hash);
+        } catch (e) {
+          toast(String(e), "error");
+        }
+      }
     },
   },
 });

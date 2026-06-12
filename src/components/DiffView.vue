@@ -172,7 +172,7 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
 function revealPendingLine(ed: monaco.editor.ICodeEditor | null) {
   const line = repo.pendingRevealLine;
   if (!line || !ed) return;
-  repo.pendingRevealLine = null;
+  repo.clearPendingReveal();
   ed.revealLineInCenter(line);
   ed.setPosition({ lineNumber: line, column: 1 });
   ed.focus();

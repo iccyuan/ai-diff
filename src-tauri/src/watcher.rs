@@ -1,13 +1,15 @@
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
-/// Holds the active repo watcher; replaced when another repo is opened.
-/// Dropping the watcher disconnects its channel, which ends the debounce thread.
-pub struct WatcherState(pub Mutex<Option<ActiveWatch>>);
+/// One active watcher per window label, so several windows can watch
+/// different repos at the same time. Dropping a watcher disconnects its
+/// channel, which ends the matching debounce thread.
+pub struct WatcherState(pub Mutex<HashMap<String, ActiveWatch>>);
 
 pub struct ActiveWatch {
     _watcher: RecommendedWatcher,
@@ -36,6 +38,7 @@ fn relevant(root: &Path, p: &Path) -> bool {
 fn debounce_loop(
     rx: Receiver<notify::Result<notify::Event>>,
     app: tauri::AppHandle,
+    window_label: String,
     emit_root: String,
     root: PathBuf,
 ) {
@@ -61,23 +64,25 @@ fn debounce_loop(
             }
         }
         if pending {
-            let _ = app.emit("repo-changed", &emit_root);
+            let _ = app.emit_to(&window_label, "repo-changed", &emit_root);
         }
     }
 }
 
 #[tauri::command]
 pub fn watch_repo(
-    app: tauri::AppHandle,
+    window: tauri::Window,
     state: tauri::State<'_, WatcherState>,
     repo: String,
 ) -> Result<(), String> {
+    let label = window.label().to_string();
     let root = PathBuf::from(&repo);
+    // one watcher per (window, repo): a window can hold several workspaces
+    let key = format!("{label}|{repo}");
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    if guard.as_ref().is_some_and(|w| w.root == root) {
+    if guard.contains_key(&key) {
         return Ok(());
     }
-    *guard = None; // drop previous watcher first
 
     let (tx, rx) = channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(tx).map_err(|e| e.to_string())?;
@@ -85,12 +90,27 @@ pub fn watch_repo(
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
+    let app = window.app_handle().clone();
     let thread_root = root.clone();
-    std::thread::spawn(move || debounce_loop(rx, app, repo, thread_root));
+    std::thread::spawn(move || debounce_loop(rx, app, label, repo, thread_root));
 
-    *guard = Some(ActiveWatch {
-        _watcher: watcher,
-        root,
-    });
+    guard.insert(
+        key,
+        ActiveWatch {
+            _watcher: watcher,
+            root,
+        },
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unwatch_repo(
+    window: tauri::Window,
+    state: tauri::State<'_, WatcherState>,
+    repo: String,
+) -> Result<(), String> {
+    let key = format!("{}|{repo}", window.label());
+    state.0.lock().map_err(|e| e.to_string())?.remove(&key);
     Ok(())
 }

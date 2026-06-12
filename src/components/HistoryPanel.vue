@@ -22,7 +22,7 @@ const COMMIT_ROW_PX = 68;
 function fitPageSize() {
   const h = scroller.value?.clientHeight ?? 600;
   // fill the visible height plus one extra screen so the scrollbar exists
-  repo.commitPageSize = Math.max(20, Math.ceil((h / COMMIT_ROW_PX) * 2));
+  repo.setCommitPageSize(Math.max(20, Math.ceil((h / COMMIT_ROW_PX) * 2)));
 }
 
 function onScroll() {
