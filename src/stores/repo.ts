@@ -193,6 +193,14 @@ export const useRepoStore = defineStore("repo", {
       this.active = i;
       if (this.viewMode === "all") this.ensureAllFiles();
     },
+    moveWorkspace(from: number, to: number) {
+      const n = this.workspaces.length;
+      if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+      const act = this.workspaces[this.active] ?? null;
+      const [w] = this.workspaces.splice(from, 1);
+      this.workspaces.splice(to, 0, w);
+      if (act) this.active = this.workspaces.indexOf(act);
+    },
     closeWorkspace(i: number) {
       const w = this.workspaces[i];
       if (!w) return;

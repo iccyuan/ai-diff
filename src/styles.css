@@ -260,6 +260,17 @@ input[type="checkbox"] {
   background: var(--bg-hover);
 }
 
+.proj-header {
+  touch-action: none; /* pointer-event drag reorder */
+}
+
+.proj-header.dragging {
+  background: var(--bg-active);
+  box-shadow: var(--shadow);
+  opacity: 0.85;
+  cursor: grabbing;
+}
+
 .proj-header.active {
   color: var(--fg);
 }

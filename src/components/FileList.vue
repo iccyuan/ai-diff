@@ -175,6 +175,43 @@ function onProjectClick(i: number, root: string) {
   }
   collapsedProjects.value = s;
 }
+
+/* drag-to-reorder project sections via pointer events on window (HTML5
+   DnD is consumed by Tauri's native file drag-drop handler on Windows) */
+const drag = ref<{ index: number; root: string; startY: number; moved: boolean } | null>(null);
+
+function onWinPointerMove(e: PointerEvent) {
+  const s = drag.value;
+  if (!s) return;
+  if (!s.moved && Math.abs(e.clientY - s.startY) < 6) return;
+  s.moved = true;
+  const headers = [...document.querySelectorAll<HTMLElement>(".file-list .proj-header")];
+  const over = headers.findIndex((h) => {
+    const r = h.getBoundingClientRect();
+    return e.clientY >= r.top && e.clientY <= r.bottom;
+  });
+  if (over >= 0 && over !== s.index) {
+    repo.moveWorkspace(s.index, over);
+    s.index = over;
+  }
+}
+
+function onWinPointerUp() {
+  window.removeEventListener("pointermove", onWinPointerMove);
+  const s = drag.value;
+  drag.value = null;
+  if (!s || s.moved) return;
+  // no movement: treat as a plain click on that project header
+  const idx = repo.workspaces.findIndex((w) => w.repo.root === s.root);
+  if (idx >= 0) onProjectClick(idx, s.root);
+}
+
+function onProjPointerDown(i: number, root: string, e: PointerEvent) {
+  if (e.button !== 0 || (e.target as HTMLElement).closest(".proj-close")) return;
+  drag.value = { index: i, root, startY: e.clientY, moved: false };
+  window.addEventListener("pointermove", onWinPointerMove);
+  window.addEventListener("pointerup", onWinPointerUp, { once: true });
+}
 </script>
 
 <template>
@@ -193,9 +230,9 @@ function onProjectClick(i: number, root: string) {
     <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
       <div
         class="proj-header"
-        :class="{ active: i === repo.active }"
+        :class="{ active: i === repo.active, dragging: drag?.moved && drag.index === i }"
         :title="w.repo.root"
-        @click="onProjectClick(i, w.repo.root)"
+        @pointerdown="onProjPointerDown(i, w.repo.root, $event)"
       >
         <svg class="chevron" :class="{ open: isExpanded(i, w.repo.root) }" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
