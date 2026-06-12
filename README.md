@@ -43,6 +43,20 @@ diff，并支持整体还原 / 单文件还原 / 单个修改块（hunk）还原
   浅深色），应用外壳颜色随主题联动；主题与最近打开仓库持久化
 - 比较语义固定为 **HEAD vs 工作树**：AI 代理是否 stage 过都能看全
 
+## 安装
+
+从 [Releases](https://github.com/iccyuan/ai-diff/releases) 下载对应平台
+安装包：Windows 用 `.exe`（NSIS 用户级一键安装，自动建开始菜单/桌面快捷
+方式，无需管理员权限）；macOS 用 `.dmg`；Linux 用 `.deb` / `.AppImage`。
+
+## 发布
+
+推送 `v*` 标签即触发 GitHub Actions 三平台构建并自动发布 Release：
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
 ## 开发
 
 前置：Node ≥ 20、Rust（stable，Windows 用 MSVC 工具链）、git ≥ 2.23。

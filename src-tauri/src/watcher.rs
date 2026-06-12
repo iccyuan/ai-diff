@@ -13,7 +13,6 @@ pub struct WatcherState(pub Mutex<HashMap<String, ActiveWatch>>);
 
 pub struct ActiveWatch {
     _watcher: RecommendedWatcher,
-    root: PathBuf,
 }
 
 /// Inside .git only index/HEAD/refs affect what we show; everything else
@@ -94,13 +93,7 @@ pub fn watch_repo(
     let thread_root = root.clone();
     std::thread::spawn(move || debounce_loop(rx, app, label, repo, thread_root));
 
-    guard.insert(
-        key,
-        ActiveWatch {
-            _watcher: watcher,
-            root,
-        },
-    );
+    guard.insert(key, ActiveWatch { _watcher: watcher });
     Ok(())
 }
 
