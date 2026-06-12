@@ -662,7 +662,11 @@ input[type="checkbox"] {
 }
 
 .commit-row .chevron {
-  margin-top: 1px;
+  align-self: center;
+}
+
+.commit-row .avatar {
+  align-self: center;
 }
 
 .commit-main {
