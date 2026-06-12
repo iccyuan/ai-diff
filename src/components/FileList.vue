@@ -4,6 +4,7 @@ import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
 import { fileIcon } from "../lib/fileIcons";
+import Spinner from "./Spinner.vue";
 import type { ChangeKind, FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
@@ -166,7 +167,7 @@ function move(delta: number) {
         更改 <span class="count">{{ repo.files.length }}</span>
       </button>
       <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
-      <span v-if="repo.loadingStatus" class="muted">刷新中…</span>
+      <Spinner v-if="repo.loadingStatus" :size="14" />
     </div>
     <div v-if="repo.mode === 'changes' && repo.files.length" class="totals">
       共 {{ repo.files.length }} 个文件

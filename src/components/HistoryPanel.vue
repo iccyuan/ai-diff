@@ -3,7 +3,8 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { fileIcon } from "../lib/fileIcons";
 import Avatar from "./Avatar.vue";
-import type { FileStatus } from "../lib/api";
+import Spinner from "./Spinner.vue";
+import type { CommitInfo, FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
 const scroller = ref<HTMLElement | null>(null);
@@ -34,6 +35,25 @@ function onScroll() {
 
 function name(f: FileStatus): string {
   return f.path.split("/").pop()!;
+}
+
+/** GitHub-style diffstat: five blocks split between added / deleted / neutral */
+function statBlocks(c: CommitInfo): ("a" | "d" | "n")[] {
+  const total = c.additions + c.deletions;
+  if (!total) return ["n", "n", "n", "n", "n"];
+  let a = Math.round((c.additions / total) * 5);
+  let d = Math.round((c.deletions / total) * 5);
+  if (c.additions > 0) a = Math.max(a, 1);
+  if (c.deletions > 0) d = Math.max(d, 1);
+  while (a + d > 5) {
+    if (a >= d) a--;
+    else d--;
+  }
+  return [
+    ...Array<"a">(a).fill("a"),
+    ...Array<"d">(d).fill("d"),
+    ...Array<"n">(5 - a - d).fill("n"),
+  ];
 }
 
 onMounted(() => {
@@ -69,15 +89,18 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
               <span class="hash">{{ c.shortHash }}</span>
               <span class="author">{{ c.author }}</span>
               <span>{{ c.date }}</span>
-              <span class="stats">
+              <span class="stats" :title="`+${c.additions} −${c.deletions}`">
                 <span class="add">+{{ c.additions }}</span>
                 <span class="del">−{{ c.deletions }}</span>
+                <span class="stat-blocks">
+                  <i v-for="(b, i) in statBlocks(c)" :key="i" :class="b"></i>
+                </span>
               </span>
             </div>
           </div>
         </div>
         <ul v-if="repo.expandedCommits.includes(c.hash)" class="commit-files">
-          <li v-if="!repo.commitFiles[c.hash]" class="muted loading-files">加载文件…</li>
+          <li v-if="!repo.commitFiles[c.hash]" class="muted loading-files"><Spinner :size="14" /></li>
           <li
             v-for="f in repo.commitFiles[c.hash] ?? []"
             :key="f.path"
@@ -97,7 +120,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
           </li>
         </ul>
       </div>
-      <div v-if="repo.loadingCommits" class="list-tail muted">加载中…</div>
+      <div v-if="repo.loadingCommits" class="list-tail muted"><Spinner :size="18" /></div>
       <div v-else-if="repo.commitsExhausted && repo.commits.length" class="list-tail muted">已到最早提交</div>
       <div v-else-if="!repo.commits.length" class="list-tail muted">暂无提交历史</div>
     </div>

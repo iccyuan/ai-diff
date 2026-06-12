@@ -7,6 +7,7 @@ import { languageForPath, monaco } from "../monaco/setup";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
+import Spinner from "./Spinner.vue";
 import type { Hunk } from "../lib/api";
 
 const repo = useRepoStore();
@@ -209,7 +210,8 @@ onBeforeUnmount(() => {
       <button :class="{ active: !mdPreviewOn }" @click="mdPreviewOn = false">源码</button>
     </div>
     <div v-if="overlayText" class="overlay">
-      <svg class="ghost" viewBox="0 0 24 24" aria-hidden="true">
+      <Spinner v-if="repo.loadingDiff" :size="28" />
+      <svg v-else class="ghost" viewBox="0 0 24 24" aria-hidden="true">
         <rect x="2.5" y="3" width="8" height="18" rx="1.5" />
         <rect x="13.5" y="3" width="8" height="18" rx="1.5" opacity="0.45" />
         <rect x="4.5" y="6" width="4" height="1.6" rx="0.8" fill="var(--bg)" />
