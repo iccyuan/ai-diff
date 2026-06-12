@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
@@ -32,12 +33,11 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
-onMounted(() => {
-  // dev convenience: `VITE_OPEN_REPO=<path> npm run tauri dev` opens a repo on launch
-  const auto = import.meta.env.VITE_OPEN_REPO;
-  if (import.meta.env.DEV && typeof auto === "string" && auto) {
-    useRepoStore().openRepo(auto);
-  }
+onMounted(async () => {
+  // `AI_DIFF_OPEN_REPO=<path>` (or legacy VITE_OPEN_REPO) opens a repo on launch;
+  // resolved by the Rust side so it works regardless of vite env plumbing
+  const auto = await invoke<string | null>("auto_open_path");
+  if (auto) useRepoStore().openRepo(auto);
 });
 </script>
 

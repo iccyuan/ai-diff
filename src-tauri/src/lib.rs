@@ -20,6 +20,7 @@ pub fn run() {
             git::log_commits,
             git::commit_files,
             git::get_commit_file_diff,
+            git::auto_open_path,
             watcher::watch_repo
         ])
         .run(tauri::generate_context!())

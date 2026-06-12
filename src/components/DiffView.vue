@@ -207,6 +207,15 @@ onBeforeUnmount(() => {
       <button :class="{ active: mdPreviewOn }" @click="mdPreviewOn = true">预览</button>
       <button :class="{ active: !mdPreviewOn }" @click="mdPreviewOn = false">源码</button>
     </div>
-    <div v-if="overlayText" class="overlay">{{ overlayText }}</div>
+    <div v-if="overlayText" class="overlay">
+      <svg class="ghost" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.5" y="3" width="8" height="18" rx="1.5" />
+        <rect x="13.5" y="3" width="8" height="18" rx="1.5" opacity="0.45" />
+        <rect x="4.5" y="6" width="4" height="1.6" rx="0.8" fill="var(--bg)" />
+        <rect x="4.5" y="9.2" width="4" height="1.6" rx="0.8" fill="var(--bg)" />
+        <rect x="15.5" y="6" width="4" height="1.6" rx="0.8" fill="var(--bg)" />
+      </svg>
+      <span>{{ overlayText }}</span>
+    </div>
   </section>
 </template>

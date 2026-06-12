@@ -47,8 +47,8 @@ npm run tauri dev          # 开发运行
 npm run tauri build        # 打包安装包（产物在 src-tauri/target/release/bundle/）
 ```
 
-开发调试技巧：`VITE_OPEN_REPO=<仓库路径> npm run tauri dev` 启动后自动打开
-指定仓库（仅 dev 构建生效）。
+开发调试技巧：`AI_DIFF_OPEN_REPO=<仓库路径> npm run tauri dev` 启动后自动
+打开指定仓库（Rust 侧读取环境变量，正式构建同样可用）。
 
 ## 测试
 

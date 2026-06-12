@@ -320,6 +320,16 @@ fn untracked_diff(repo: &Path, path: &str) -> Result<FileDiff, String> {
     }
 }
 
+/// repo to open on launch, from AI_DIFF_OPEN_REPO (or legacy VITE_OPEN_REPO);
+/// read on the Rust side so it works regardless of how vite resolves env
+#[tauri::command]
+pub fn auto_open_path() -> Option<String> {
+    std::env::var("AI_DIFF_OPEN_REPO")
+        .or_else(|_| std::env::var("VITE_OPEN_REPO"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
 #[tauri::command]
 pub fn open_repo(path: String) -> Result<RepoInfo, String> {
     let p = PathBuf::from(&path);
