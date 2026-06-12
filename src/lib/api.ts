@@ -75,4 +75,12 @@ export const api = {
       oldPath: f.oldPath,
       kind: f.kind,
     }),
+  searchText: (repo: string, query: string, wholeWord: boolean, max = 500) =>
+    invoke<SearchHit[]>("search_text", { repo, query, wholeWord, max }),
 };
+
+export interface SearchHit {
+  path: string;
+  line: number;
+  text: string;
+}

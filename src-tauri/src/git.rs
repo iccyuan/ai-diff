@@ -321,6 +321,59 @@ fn untracked_diff(repo: &Path, path: &str) -> Result<FileDiff, String> {
     }
 }
 
+#[derive(Serialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub path: String,
+    pub line: u32,
+    pub text: String,
+}
+
+/// Repo-wide fixed-string search via `git grep` (tracked + untracked,
+/// binary files skipped). whole_word approximates symbol lookup.
+#[tauri::command]
+pub fn search_text(
+    repo: String,
+    query: String,
+    whole_word: bool,
+    max: u32,
+) -> Result<Vec<SearchHit>, String> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let repo = PathBuf::from(repo);
+    let mut args: Vec<&str> = vec!["grep", "-n", "-I", "--no-color", "--untracked", "-F"];
+    if whole_word {
+        args.push("-w");
+    }
+    args.push("-e");
+    args.push(&query);
+    let out = match run_git(&repo, &args, None) {
+        Ok(o) => o,
+        // exit code 1 with empty stderr = no matches
+        Err(e) if e.is_empty() => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    let text = String::from_utf8_lossy(&out);
+    let mut hits = Vec::new();
+    for line in text.lines() {
+        if hits.len() >= max as usize {
+            break;
+        }
+        let mut parts = line.splitn(3, ':');
+        let (Some(p), Some(l), Some(t)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        let Ok(ln) = l.parse::<u32>() else { continue };
+        hits.push(SearchHit {
+            path: p.to_string(),
+            line: ln,
+            text: t.trim_end().chars().take(300).collect(),
+        });
+    }
+    Ok(hits)
+}
+
 /// repo to open on launch, from AI_DIFF_OPEN_REPO (or legacy VITE_OPEN_REPO);
 /// read on the Rust side so it works regardless of how vite resolves env
 #[tauri::command]
@@ -1204,6 +1257,24 @@ mod repo_tests {
         assert!(b.content.is_none());
 
         assert!(read_file(r.root(), "missing.txt".into()).is_err());
+    }
+
+    #[test]
+    fn search_text_basics() {
+        let r = TempRepo::new("search");
+        r.write("a.ts", b"function hello() {}\nconst helloWorld = 1;\n");
+        r.commit_all();
+        r.write("b.ts", b"hello();\n"); // untracked must be searched too
+
+        let hits = search_text(r.root(), "hello".into(), false, 100).unwrap();
+        assert_eq!(hits.len(), 3);
+
+        let word_hits = search_text(r.root(), "hello".into(), true, 100).unwrap();
+        assert_eq!(word_hits.len(), 2, "-w must exclude helloWorld");
+        assert!(word_hits.iter().any(|h| h.path == "b.ts" && h.line == 1));
+
+        assert!(search_text(r.root(), "nomatch_xyz".into(), false, 100).unwrap().is_empty());
+        assert_eq!(search_text(r.root(), "hello".into(), false, 1).unwrap().len(), 1);
     }
 
     #[test]

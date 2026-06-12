@@ -9,6 +9,9 @@ import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
+import QuickOpen from "./components/QuickOpen.vue";
+import SearchPanel from "./components/SearchPanel.vue";
+import { openQuickOpen, openSearch } from "./lib/palette";
 import { useRepoStore } from "./stores/repo";
 import { useSettingsStore } from "./stores/settings";
 
@@ -34,7 +37,22 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
+// Eclipse-style global shortcuts: Ctrl+Shift+R open resource, Ctrl+H search
+function onGlobalKey(e: KeyboardEvent) {
+  if (!repo.repo) return;
+  if (e.ctrlKey && e.shiftKey && e.code === "KeyR") {
+    e.preventDefault();
+    e.stopPropagation();
+    openQuickOpen();
+  } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === "KeyH") {
+    e.preventDefault();
+    e.stopPropagation();
+    openSearch();
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener("keydown", onGlobalKey, true);
   // `AI_DIFF_OPEN_REPO=<path>` (or legacy VITE_OPEN_REPO) opens a repo on launch;
   // resolved by the Rust side so it works regardless of vite env plumbing
   const auto = await invoke<string | null>("auto_open_path");
@@ -55,6 +73,8 @@ onMounted(async () => {
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
+    <QuickOpen />
+    <SearchPanel />
     <ConfirmDialog />
     <ToastHost />
   </div>

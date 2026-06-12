@@ -1019,6 +1019,143 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+/* ---------- quick-open / search palettes ---------- */
+.palette-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  z-index: 150;
+  animation: mask-in 0.12s ease;
+}
+
+.palette {
+  width: 620px;
+  max-width: 92vw;
+  max-height: min(560px, 75vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  animation: modal-in 0.14s ease;
+  overflow: hidden;
+}
+
+.palette > input,
+.palette .search-bar input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 15px;
+  font-family: inherit;
+  padding: 14px 18px;
+  flex: 1;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 14px;
+}
+
+.word-toggle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.word-toggle input {
+  box-shadow: none;
+}
+
+.palette-status {
+  padding: 0 18px 6px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  min-height: 18px;
+}
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 8px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+}
+
+.palette-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.palette-list li:hover,
+.palette-list li.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.palette-list .vicon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.palette-list .pname {
+  flex: none;
+}
+
+.palette-list .pdir {
+  color: var(--fg-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-list .ppath {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.palette-list .pline {
+  color: var(--accent);
+}
+
+.palette-list .ptext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.palette-empty {
+  color: var(--fg-muted);
+  justify-content: center;
+  cursor: default !important;
+}
+
+.palette-empty:hover {
+  background: transparent !important;
+}
+
 /* ---------- spinner ---------- */
 @keyframes spin {
   to {

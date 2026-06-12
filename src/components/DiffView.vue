@@ -7,6 +7,7 @@ import { languageForPath, monaco } from "../monaco/setup";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
+import { openSearch } from "../lib/palette";
 import Spinner from "./Spinner.vue";
 import type { Hunk } from "../lib/api";
 
@@ -36,6 +37,56 @@ const renderedMd = computed(() => {
   if (!showMdPreview.value || repo.content?.content == null) return "";
   return DOMPurify.sanitize(marked.parse(repo.content.content, { async: false }));
 });
+
+/** Eclipse-style navigation: F3 / Ctrl+Shift+G / Ctrl+click run a repo-wide
+ *  whole-word search for the symbol under the cursor; Ctrl+L is go-to-line. */
+function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
+  const symbolSearch = () => {
+    const pos = ed.getPosition();
+    const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
+    if (word) openSearch(word, true);
+  };
+  ed.addAction({
+    id: "eclipse-open-declaration",
+    label: "跳转到符号（全仓库）",
+    keybindings: [monaco.KeyCode.F3],
+    contextMenuGroupId: "navigation",
+    contextMenuOrder: 1,
+    run: symbolSearch,
+  });
+  ed.addAction({
+    id: "eclipse-find-references",
+    label: "查找引用（全仓库）",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyG],
+    contextMenuGroupId: "navigation",
+    contextMenuOrder: 2,
+    run: symbolSearch,
+  });
+  ed.addAction({
+    id: "eclipse-goto-line",
+    label: "转到行",
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL],
+    run: () => {
+      ed.focus();
+      ed.getAction("editor.action.gotoLine")?.run();
+    },
+  });
+  ed.onMouseDown((e) => {
+    if (!e.event.ctrlKey || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
+    const pos = e.target.position;
+    const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
+    if (word) openSearch(word, true);
+  });
+}
+
+function revealPendingLine(ed: monaco.editor.ICodeEditor | null) {
+  const line = repo.pendingRevealLine;
+  if (!line || !ed) return;
+  repo.pendingRevealLine = null;
+  ed.revealLineInCenter(line);
+  ed.setPosition({ lineNumber: line, column: 1 });
+  ed.focus();
+}
 
 function onPreviewClick(e: MouseEvent) {
   // external links leave the webview and open in the system browser
@@ -84,11 +135,14 @@ function renderContent() {
       fontFamily: settings.editorFontFamily,
       fontSize: settings.editorFontSize,
     });
+    addEclipseActions(plainEditor);
   }
   if (!plainEditor) return;
   const model = monaco.editor.createModel(c.content, languageForPath(repo.selectedPath));
   models = [model];
   plainEditor.setModel(model);
+  if (repo.pendingRevealLine) mdPreviewOn.value = false;
+  revealPendingLine(plainEditor);
 }
 
 function render() {
@@ -108,6 +162,7 @@ function render() {
   const modified = monaco.editor.createModel(d.modified ?? "", lang);
   models = [original, modified];
   editor.setModel({ original, modified });
+  revealPendingLine(editor.getModifiedEditor());
 
   // hunk-level revert only applies to working-tree content edits (f is null
   // for history diffs); added/deleted/untracked revert whole from the list
@@ -168,6 +223,8 @@ onMounted(() => {
   // gutter revert icons live in the modified editor's glyph margin
   const mod = editor.getModifiedEditor();
   mod.updateOptions({ glyphMargin: true });
+  addEclipseActions(mod as monaco.editor.IStandaloneCodeEditor);
+  addEclipseActions(editor.getOriginalEditor() as monaco.editor.IStandaloneCodeEditor);
   mod.onMouseDown((e) => {
     if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
     const line = e.target.position?.lineNumber;

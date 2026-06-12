@@ -55,6 +55,8 @@ export const useRepoStore = defineStore("repo", {
     // open viewer tabs
     tabs: [] as ViewTab[],
     activeTabId: null as string | null,
+    // consumed by DiffView after the next model load (search result jumps)
+    pendingRevealLine: null as number | null,
   }),
   getters: {
     selected(state): FileStatus | null {
@@ -127,13 +129,20 @@ export const useRepoStore = defineStore("repo", {
     async setMode(mode: "changes" | "all") {
       if (this.mode === mode) return;
       this.mode = mode;
-      if (mode === "all" && this.repo && !this.allFiles.length) {
-        try {
-          this.allFiles = await api.listFiles(this.repo.root);
-        } catch (e) {
-          toast(String(e), "error");
-        }
+      if (mode === "all") await this.ensureAllFiles();
+    },
+    async ensureAllFiles() {
+      if (!this.repo || this.allFiles.length) return;
+      try {
+        this.allFiles = await api.listFiles(this.repo.root);
+      } catch (e) {
+        toast(String(e), "error");
       }
+    },
+    /** open a file (worktree view) and scroll to a specific line */
+    async openAtLine(path: string, line: number) {
+      this.pendingRevealLine = line;
+      await this.selectPath(path);
     },
     async selectFile(f: FileStatus) {
       await this.selectPath(f.path);
