@@ -22,6 +22,8 @@ export interface CommitInfo {
   author: string;
   date: string;
   subject: string;
+  additions: number;
+  deletions: number;
 }
 
 export interface Hunk {

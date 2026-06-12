@@ -44,6 +44,8 @@ pub struct CommitInfo {
     pub author: String,
     pub date: String,
     pub subject: String,
+    pub additions: u32,
+    pub deletions: u32,
 }
 
 #[derive(Serialize, PartialEq, Eq, Debug)]
@@ -480,28 +482,50 @@ pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo
     }
     let skip_arg = format!("--skip={skip}");
     let count_arg = format!("--max-count={count}");
+    // \x01 marks each record start; --shortstat appends a
+    // " N files changed, X insertions(+), Y deletions(-)" line per commit
     let out = run_git_text(
         &repo,
         &[
             "log",
             &skip_arg,
             &count_arg,
+            "--shortstat",
             "--date=format:%Y-%m-%d %H:%M",
-            "--pretty=format:%H%x00%h%x00%an%x00%ad%x00%s",
+            "--pretty=format:%x01%H%x00%h%x00%an%x00%ad%x00%s",
         ],
     )?;
     let mut commits = Vec::new();
-    for line in out.split('\n').filter(|l| !l.is_empty()) {
-        let cols: Vec<&str> = line.splitn(5, '\0').collect();
-        if cols.len() == 5 {
-            commits.push(CommitInfo {
-                hash: cols[0].to_string(),
-                short_hash: cols[1].to_string(),
-                author: cols[2].to_string(),
-                date: cols[3].to_string(),
-                subject: cols[4].to_string(),
-            });
+    for block in out.split('\x01').filter(|b| !b.is_empty()) {
+        let mut lines = block.lines();
+        let Some(head) = lines.next() else { continue };
+        let cols: Vec<&str> = head.splitn(5, '\0').collect();
+        if cols.len() != 5 {
+            continue;
         }
+        let (mut additions, mut deletions) = (0u32, 0u32);
+        for line in lines {
+            if !line.contains(" changed") {
+                continue;
+            }
+            for seg in line.split(',') {
+                let n = seg.trim().split(' ').next().and_then(|s| s.parse::<u32>().ok());
+                if seg.contains("insertion") {
+                    additions = n.unwrap_or(0);
+                } else if seg.contains("deletion") {
+                    deletions = n.unwrap_or(0);
+                }
+            }
+        }
+        commits.push(CommitInfo {
+            hash: cols[0].to_string(),
+            short_hash: cols[1].to_string(),
+            author: cols[2].to_string(),
+            date: cols[3].to_string(),
+            subject: cols[4].to_string(),
+            additions,
+            deletions,
+        });
     }
     Ok(commits)
 }
@@ -1095,6 +1119,11 @@ mod repo_tests {
         assert_eq!(commits.len(), 2);
         assert!(!commits[0].hash.is_empty());
         assert_eq!(commits[0].subject, "c");
+        // newest commit: a.txt +2 -1, b.txt +1 => totals +3 -1
+        assert_eq!(commits[0].additions, 3);
+        assert_eq!(commits[0].deletions, 1);
+        assert_eq!(commits[1].additions, 2); // root commit adds a.txt (2 lines)
+        assert_eq!(commits[1].deletions, 0);
 
         // paging
         let page2 = log_commits(r.root(), 1, 10).unwrap();

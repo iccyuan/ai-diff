@@ -186,7 +186,9 @@ function move(delta: number) {
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="toggleDir(row.path)"
         >
-          <span class="chevron">{{ row.collapsed ? "▸" : "▾" }}</span>
+          <svg class="chevron" :class="{ open: !row.collapsed }" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
+          </svg>
           <span class="dir-name">{{ row.label }}</span>
         </li>
         <li

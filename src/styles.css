@@ -301,13 +301,18 @@ input[type="checkbox"] {
   user-select: none;
 }
 
+/* VS Code style twistie: chevron-right that rotates 90° when expanded */
 .chevron {
   flex: none;
   width: 16px;
-  text-align: center;
-  font-size: 14px;
-  line-height: 1;
+  height: 16px;
+  fill: currentColor;
   opacity: 0.8;
+  transition: transform 0.1s ease;
+}
+
+.chevron.open {
+  transform: rotate(90deg);
 }
 
 .file-list .dir-row .dir-name {
@@ -350,12 +355,17 @@ input[type="checkbox"] {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  line-height: 11px;
-  font-size: 7.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 7px;
   font-weight: 700;
+  font-family: "Segoe UI", Arial, sans-serif;
   color: #fff;
   border: 1.5px solid var(--bg-panel);
   box-sizing: content-box;
+  text-align: center;
 }
 
 .status-dot.modified {
@@ -547,6 +557,18 @@ input[type="checkbox"] {
   color: var(--fg-muted);
   font-size: 11px;
   margin-top: 2px;
+  align-items: center;
+}
+
+.commit-main .meta .author {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 90px;
+}
+
+.commit-main .meta .stats {
+  margin-left: auto;
 }
 
 .commit-main .hash {

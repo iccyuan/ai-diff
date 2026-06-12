@@ -53,13 +53,24 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
     <div ref="scroller" class="commits" @scroll.passive="onScroll">
       <div v-for="c in repo.commits" :key="c.hash" class="commit">
         <div class="commit-row" @click="repo.toggleCommit(c.hash)">
-          <span class="chevron">{{ repo.expandedCommits.includes(c.hash) ? "▾" : "▸" }}</span>
+          <svg
+            class="chevron"
+            :class="{ open: repo.expandedCommits.includes(c.hash) }"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+          >
+            <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
+          </svg>
           <div class="commit-main">
             <div class="subject" :title="c.subject">{{ c.subject }}</div>
             <div class="meta">
               <span class="hash">{{ c.shortHash }}</span>
-              <span>{{ c.author }}</span>
+              <span class="author">{{ c.author }}</span>
               <span>{{ c.date }}</span>
+              <span class="stats">
+                <span class="add">+{{ c.additions }}</span>
+                <span class="del">−{{ c.deletions }}</span>
+              </span>
             </div>
           </div>
         </div>
