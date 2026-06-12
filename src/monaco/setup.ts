@@ -19,6 +19,11 @@ import solarizedLight from "./themes/solarized-light.json";
 import solarizedDark from "./themes/solarized-dark.json";
 import dracula from "./themes/dracula.json";
 import nord from "./themes/nord.json";
+import tomorrow from "./themes/tomorrow.json";
+import xcode from "./themes/xcode.json";
+import chromeDevtools from "./themes/chrome-devtools.json";
+import dawn from "./themes/dawn.json";
+import clouds from "./themes/clouds.json";
 
 // without this Monaco freezes: it cannot create its editor worker under Vite
 self.MonacoEnvironment = {
@@ -33,6 +38,11 @@ const CUSTOM_THEMES: Record<string, unknown> = {
   "solarized-dark": solarizedDark,
   dracula,
   nord,
+  tomorrow,
+  xcode,
+  "chrome-devtools": chromeDevtools,
+  dawn,
+  clouds,
 };
 for (const [id, data] of Object.entries(CUSTOM_THEMES)) {
   monaco.editor.defineTheme(id, data as monaco.editor.IStandaloneThemeData);
@@ -80,15 +90,20 @@ export interface ThemeMeta {
 
 export const THEMES: ThemeMeta[] = [
   { id: "vs", label: "VS Light", kind: "light" },
-  { id: "vs-dark", label: "VS Dark", kind: "dark" },
-  { id: "hc-black", label: "High Contrast", kind: "dark" },
   { id: "github-light", label: "GitHub Light", kind: "light" },
+  { id: "xcode", label: "Xcode", kind: "light" },
+  { id: "tomorrow", label: "Tomorrow", kind: "light" },
+  { id: "chrome-devtools", label: "Chrome DevTools", kind: "light" },
+  { id: "solarized-light", label: "Solarized Light", kind: "light" },
+  { id: "dawn", label: "Dawn", kind: "light" },
+  { id: "clouds", label: "Clouds", kind: "light" },
+  { id: "vs-dark", label: "VS Dark", kind: "dark" },
   { id: "github-dark", label: "GitHub Dark", kind: "dark" },
   { id: "monokai", label: "Monokai", kind: "dark" },
-  { id: "solarized-light", label: "Solarized Light", kind: "light" },
   { id: "solarized-dark", label: "Solarized Dark", kind: "dark" },
   { id: "dracula", label: "Dracula", kind: "dark" },
   { id: "nord", label: "Nord", kind: "dark" },
+  { id: "hc-black", label: "High Contrast", kind: "dark" },
 ];
 
 /** Sets the Monaco theme and flips the app chrome (CSS variables) to match. */
