@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { fileIcon } from "../lib/fileIcons";
+import Avatar from "./Avatar.vue";
 import type { FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
@@ -16,14 +17,6 @@ const BADGE: Record<string, string> = {
 };
 
 const COMMIT_ROW_PX = 68;
-
-const AVATAR_COLORS = ["#0969da", "#2da44e", "#8250df", "#cf222e", "#d29922", "#0e7490", "#bf3989"];
-
-function authorColor(name: string): string {
-  let sum = 0;
-  for (const ch of name) sum += ch.codePointAt(0) ?? 0;
-  return AVATAR_COLORS[sum % AVATAR_COLORS.length];
-}
 
 function fitPageSize() {
   const h = scroller.value?.clientHeight ?? 600;
@@ -69,9 +62,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
           >
             <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
           </svg>
-          <span class="avatar" :style="{ background: authorColor(c.author) }" :title="c.author">{{
-            c.author.slice(0, 1).toUpperCase()
-          }}</span>
+          <Avatar :author="c.author" :email="c.email" />
           <div class="commit-main">
             <div class="subject" :title="c.subject">{{ c.subject }}</div>
             <div class="meta">

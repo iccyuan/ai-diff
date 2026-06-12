@@ -42,6 +42,7 @@ pub struct CommitInfo {
     pub hash: String,
     pub short_hash: String,
     pub author: String,
+    pub email: String,
     pub date: String,
     pub subject: String,
     pub additions: u32,
@@ -502,15 +503,15 @@ pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo
             &count_arg,
             "--shortstat",
             "--date=format:%Y-%m-%d %H:%M",
-            "--pretty=format:%x01%H%x00%h%x00%an%x00%ad%x00%s",
+            "--pretty=format:%x01%H%x00%h%x00%an%x00%ae%x00%ad%x00%s",
         ],
     )?;
     let mut commits = Vec::new();
     for block in out.split('\x01').filter(|b| !b.is_empty()) {
         let mut lines = block.lines();
         let Some(head) = lines.next() else { continue };
-        let cols: Vec<&str> = head.splitn(5, '\0').collect();
-        if cols.len() != 5 {
+        let cols: Vec<&str> = head.splitn(6, '\0').collect();
+        if cols.len() != 6 {
             continue;
         }
         let (mut additions, mut deletions) = (0u32, 0u32);
@@ -531,8 +532,9 @@ pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo
             hash: cols[0].to_string(),
             short_hash: cols[1].to_string(),
             author: cols[2].to_string(),
-            date: cols[3].to_string(),
-            subject: cols[4].to_string(),
+            email: cols[3].to_string(),
+            date: cols[4].to_string(),
+            subject: cols[5].to_string(),
             additions,
             deletions,
         });
@@ -1129,6 +1131,7 @@ mod repo_tests {
         assert_eq!(commits.len(), 2);
         assert!(!commits[0].hash.is_empty());
         assert_eq!(commits[0].subject, "c");
+        assert_eq!(commits[0].email, "t@test");
         // newest commit: a.txt +2 -1, b.txt +1 => totals +3 -1
         assert_eq!(commits[0].additions, 3);
         assert_eq!(commits[0].deletions, 1);

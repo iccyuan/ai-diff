@@ -20,6 +20,7 @@ export interface CommitInfo {
   hash: string;
   shortHash: string;
   author: string;
+  email: string;
   date: string;
   subject: string;
   additions: number;
