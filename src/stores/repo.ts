@@ -170,9 +170,11 @@ export const useRepoStore = defineStore("repo", {
           await this.refreshWs(this.workspaces[existing]);
           return;
         }
-        const w = blankWorkspace(info);
-        this.workspaces.push(w);
+        this.workspaces.push(blankWorkspace(info));
         this.active = this.workspaces.length - 1;
+        // use the reactive proxy from the array, NOT the raw pushed object —
+        // mutating the raw object updates values without triggering reactivity
+        const w = this.workspaces[this.active];
         await useSettingsStore().addRecent(info.root);
         await this.refreshWs(w);
         await api.watchRepo(info.root);
