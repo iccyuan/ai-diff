@@ -627,6 +627,12 @@ input[type="checkbox"] {
   display: none;
 }
 
+/* right-drag pans the strip */
+.view-tabs.panning {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .vtab.dragging {
   background: var(--bg-active);
   box-shadow: var(--shadow);

@@ -9,7 +9,12 @@ const canLeft = ref(false);
 const canRight = ref(false);
 
 const menu = ref<{ x: number; y: number; tabId: string } | null>(null);
+let suppressMenu = false; // set when a right-drag pan happened, so it doesn't pop the menu
 function openMenu(e: MouseEvent, tabId: string) {
+  if (suppressMenu) {
+    suppressMenu = false;
+    return;
+  }
   menu.value = { x: e.clientX, y: e.clientY, tabId };
 }
 function closeMenu() {
@@ -69,6 +74,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("click", closeMenu);
   window.removeEventListener("blur", closeMenu);
   window.removeEventListener("pointermove", onTabPointerMove);
+  window.removeEventListener("pointermove", onPanMove);
   ro?.disconnect();
 });
 
@@ -112,12 +118,40 @@ function onTabPointerDown(i: number, id: string, e: PointerEvent) {
   window.addEventListener("pointermove", onTabPointerMove);
   window.addEventListener("pointerup", onTabPointerUp, { once: true });
 }
+
+// ----- right-button drag pans (scrolls) the whole tab strip -----
+let pan: { startX: number; startScroll: number; moved: boolean } | null = null;
+function onPanMove(e: PointerEvent) {
+  if (!pan || !strip.value) return;
+  if (!pan.moved && Math.abs(e.clientX - pan.startX) < 4) return;
+  pan.moved = true;
+  strip.value.scrollLeft = pan.startScroll - (e.clientX - pan.startX);
+}
+function onPanUp() {
+  window.removeEventListener("pointermove", onPanMove);
+  if (pan?.moved) suppressMenu = true; // a pan happened → swallow the context menu
+  pan = null;
+  strip.value?.classList.remove("panning");
+}
+function onStripPointerDown(e: PointerEvent) {
+  if (e.button !== 2 || !strip.value) return;
+  pan = { startX: e.clientX, startScroll: strip.value.scrollLeft, moved: false };
+  strip.value.classList.add("panning");
+  window.addEventListener("pointermove", onPanMove);
+  window.addEventListener("pointerup", onPanUp, { once: true });
+}
 </script>
 
 <template>
   <div v-if="repo.tabs.length" class="tabs-bar">
     <button v-if="canLeft" class="tab-arrow" title="向左滚动" @click="scrollBy(-1)">‹</button>
-    <div ref="strip" class="view-tabs" @scroll.passive="updateArrows" @wheel="onWheel">
+    <div
+      ref="strip"
+      class="view-tabs"
+      @scroll.passive="updateArrows"
+      @wheel="onWheel"
+      @pointerdown="onStripPointerDown"
+    >
       <div
         v-for="(t, i) in repo.tabs"
         :key="t.id"
