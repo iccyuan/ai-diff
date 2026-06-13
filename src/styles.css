@@ -707,35 +707,57 @@ input[type="checkbox"] {
 /* diff change navigation (IDEA F7 / Shift+F7) */
 .diff-nav {
   position: absolute;
-  top: 10px;
-  right: 22px;
+  top: 12px;
+  right: 18px;
   z-index: 10;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px 4px;
-  background: var(--bg-panel);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  font-size: 12px;
-  color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
+  padding: 3px;
+  background: color-mix(in srgb, var(--bg-panel) 86%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
 }
 
 .diff-nav button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
-  color: var(--fg);
-  font-size: 14px;
-  line-height: 1;
-  width: 24px;
-  height: 22px;
+  color: var(--fg-muted);
+  width: 26px;
+  height: 24px;
   border-radius: 6px;
   cursor: pointer;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.diff-nav button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .diff-nav button:hover {
   background: var(--bg-active);
+  color: var(--fg);
+}
+
+.diff-nav-count {
+  min-width: 40px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-nav-count i {
+  margin: 0 2px;
+  color: var(--fg-muted);
+  font-style: normal;
 }
 
 /* image before/after preview */

@@ -29,10 +29,37 @@ const isImageView = computed(() => {
 // ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
 const navList = ref<number[]>([]);
 const navIdx = ref(-1);
-function refreshNav() {
+// Prefer git's own hunk line numbers (always available for working-tree diffs,
+// no dependency on Monaco's async diff timing); fall back to Monaco's computed
+// changes for history diffs which carry no hunks.
+function computeNav(): boolean {
+  const hunks = repo.diff?.hunks ?? [];
+  if (hunks.length) {
+    navList.value = hunks.map((h) => Math.max(h.newStart, 1));
+    navIdx.value = -1;
+    return true;
+  }
   const changes = editor?.getLineChanges() ?? [];
-  navList.value = changes.map((c) => c.modifiedStartLineNumber || c.modifiedEndLineNumber || 1);
-  navIdx.value = -1;
+  if (changes.length) {
+    navList.value = changes.map((c) => c.modifiedStartLineNumber || c.modifiedEndLineNumber || 1);
+    navIdx.value = -1;
+    return true;
+  }
+  navList.value = [];
+  return false;
+}
+function refreshNav() {
+  computeNav();
+}
+function scheduleNavRefresh() {
+  navList.value = [];
+  if (computeNav()) return;
+  let tries = 0;
+  const tick = () => {
+    if (computeNav() || ++tries >= 20) return;
+    setTimeout(tick, 60);
+  };
+  tick();
 }
 function goToDiff(dir: number) {
   if (!editor || !navList.value.length) return;
@@ -328,6 +355,7 @@ function render() {
     softSetValue(editor.getModifiedEditor(), models[1], d.modified ?? "");
     rebuildHunkDecorations();
     revealPendingLine(editor.getModifiedEditor());
+    scheduleNavRefresh();
     return;
   }
 
@@ -340,6 +368,7 @@ function render() {
   renderedKey = key;
   revealPendingLine(editor.getModifiedEditor());
   rebuildHunkDecorations();
+  scheduleNavRefresh();
 }
 
 async function onRevertGlyphClick(line: number) {
@@ -461,9 +490,17 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="!contentMode && !isImageView && navList.length" class="diff-nav">
-      <button title="上一处改动 (Shift+F7)" @click="goToDiff(-1)">↑</button>
-      <span>{{ navIdx >= 0 ? navIdx + 1 : "·" }}/{{ navList.length }}</span>
-      <button title="下一处改动 (F7)" @click="goToDiff(1)">↓</button>
+      <button title="上一处改动 (Shift+F7)" @click="goToDiff(-1)">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 10 8 6l4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <span class="diff-nav-count">{{ navIdx >= 0 ? navIdx + 1 : "·" }}<i>/</i>{{ navList.length }}</span>
+      <button title="下一处改动 (F7)" @click="goToDiff(1)">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 6 8 10l4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
     </div>
     <div v-if="isMarkdown" class="md-toggle">
       <button :class="{ active: mdPreviewOn }" @click="mdPreviewOn = true">预览</button>
