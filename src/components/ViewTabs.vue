@@ -75,6 +75,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("blur", closeMenu);
   window.removeEventListener("pointermove", onTabPointerMove);
   window.removeEventListener("pointermove", onPanMove);
+  stopAuto();
   ro?.disconnect();
 });
 
@@ -90,24 +91,58 @@ watch(
 
 // ----- drag to reorder (pointer events; HTML5 DnD is taken by Tauri) -----
 const drag = ref<{ index: number; id: string; startX: number; moved: boolean } | null>(null);
+let lastX = 0;
+let autoTimer: number | null = null;
 
-function onTabPointerMove(e: PointerEvent) {
+// move the dragged tab to whatever tab sits under x
+function reorderAt(x: number) {
   const s = drag.value;
   if (!s) return;
-  if (!s.moved && Math.abs(e.clientX - s.startX) < 6) return;
-  s.moved = true;
   const tabs = [...(strip.value?.querySelectorAll<HTMLElement>(".vtab") ?? [])];
   const over = tabs.findIndex((el) => {
     const r = el.getBoundingClientRect();
-    return e.clientX >= r.left && e.clientX <= r.right;
+    return x >= r.left && x <= r.right;
   });
   if (over >= 0 && over !== s.index) {
     repo.moveTab(s.index, over);
     s.index = over;
   }
 }
+
+// while dragging near a strip edge, keep scrolling so off-screen slots are reachable
+function autoTick() {
+  const el = strip.value;
+  if (!el || !drag.value) return;
+  const r = el.getBoundingClientRect();
+  const EDGE = 52;
+  const STEP = 16;
+  let d = 0;
+  if (lastX < r.left + EDGE) d = -STEP;
+  else if (lastX > r.right - EDGE) d = STEP;
+  if (!d) return;
+  const before = el.scrollLeft;
+  el.scrollLeft = Math.max(0, Math.min(el.scrollWidth - el.clientWidth, el.scrollLeft + d));
+  if (el.scrollLeft !== before) reorderAt(lastX);
+}
+
+function onTabPointerMove(e: PointerEvent) {
+  const s = drag.value;
+  if (!s) return;
+  lastX = e.clientX;
+  if (!s.moved && Math.abs(e.clientX - s.startX) < 6) return;
+  s.moved = true;
+  reorderAt(e.clientX);
+  if (autoTimer == null) autoTimer = window.setInterval(autoTick, 16);
+}
+function stopAuto() {
+  if (autoTimer != null) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
 function onTabPointerUp() {
   window.removeEventListener("pointermove", onTabPointerMove);
+  stopAuto();
   const s = drag.value;
   drag.value = null;
   if (s && !s.moved) repo.activateTab(s.id); // no drag = plain click
