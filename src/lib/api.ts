@@ -51,6 +51,13 @@ export interface FileContent {
   tooLarge: boolean;
 }
 
+export interface ImageDiff {
+  /** data URL of the HEAD version (null for added/untracked) */
+  original: string | null;
+  /** data URL of the working-tree version (null for deleted) */
+  modified: string | null;
+}
+
 export const api = {
   openRepo: (path: string) => invoke<RepoInfo>("open_repo", { path }),
   getStatus: (repo: string) => invoke<FileStatus[]>("get_status", { repo }),
@@ -78,6 +85,8 @@ export const api = {
     }),
   searchText: (repo: string, query: string, wholeWord: boolean, max = 500) =>
     invoke<SearchHit[]>("search_text", { repo, query, wholeWord, max }),
+  getImageDiff: (repo: string, path: string, oldPath: string | null, kind: ChangeKind) =>
+    invoke<ImageDiff>("get_image_diff", { repo, path, oldPath, kind }),
 };
 
 export interface SearchHit {

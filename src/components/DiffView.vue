@@ -8,7 +8,7 @@ import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
 import { openFindDialog, openChooser } from "../lib/palette";
-import { api, type Hunk } from "../lib/api";
+import { api, type Hunk, type ImageDiff } from "../lib/api";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
 
@@ -16,6 +16,33 @@ const repo = useRepoStore();
 const settings = useSettingsStore();
 const container = ref<HTMLElement | null>(null);
 const plainContainer = ref<HTMLElement | null>(null);
+
+// ----- image before/after preview -----
+const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"];
+const imageData = ref<ImageDiff | null>(null);
+const isImageView = computed(() => {
+  const p = repo.selectedPath; // working-tree files only; history image diffs fall back to notice
+  if (!p || !IMAGE_EXTS.some((e) => p.toLowerCase().endsWith(e))) return false;
+  return (!!repo.diff && repo.diff.isBinary) || (!!repo.content && repo.content.isBinary);
+});
+
+// ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
+const navList = ref<number[]>([]);
+const navIdx = ref(-1);
+function refreshNav() {
+  const changes = editor?.getLineChanges() ?? [];
+  navList.value = changes.map((c) => c.modifiedStartLineNumber || c.modifiedEndLineNumber || 1);
+  navIdx.value = -1;
+}
+function goToDiff(dir: number) {
+  if (!editor || !navList.value.length) return;
+  navIdx.value = (navIdx.value + dir + navList.value.length) % navList.value.length;
+  const line = navList.value[navIdx.value];
+  const mod = editor.getModifiedEditor();
+  mod.revealLineInCenter(line);
+  mod.setPosition({ lineNumber: line, column: 1 });
+  mod.focus();
+}
 
 let editor: monaco.editor.IStandaloneDiffEditor | null = null;
 let plainEditor: monaco.editor.IStandaloneCodeEditor | null = null;
@@ -188,6 +215,7 @@ function onPreviewClick(e: MouseEvent) {
 }
 
 const overlayText = computed(() => {
+  if (isImageView.value) return "";
   if (!repo.repo) return "点击「打开项目」选择一个 git 仓库开始 review";
   if (!repo.selectedPath && !repo.selectedCommitPath)
     return repo.mode === "all" || repo.files.length
@@ -354,10 +382,39 @@ onMounted(() => {
     const line = e.target.position?.lineNumber;
     if (line) onRevertGlyphClick(line);
   });
+  mod.addAction({
+    id: "next-diff",
+    label: "下一处改动",
+    keybindings: [monaco.KeyCode.F7],
+    run: () => goToDiff(1),
+  });
+  mod.addAction({
+    id: "prev-diff",
+    label: "上一处改动",
+    keybindings: [monaco.KeyMod.Shift | monaco.KeyCode.F7],
+    run: () => goToDiff(-1),
+  });
+  editor.onDidUpdateDiff(refreshNav);
   render();
 });
 
 watch(() => [repo.diff, repo.content] as const, render);
+watch(
+  () => [repo.activeTabId, isImageView.value] as const,
+  async () => {
+    imageData.value = null;
+    if (!isImageView.value || !repo.repo || !repo.selectedPath) return;
+    const f = repo.selected;
+    // changed image → real kind; unchanged (all-files) → "added" forces single image
+    const kind = f?.kind ?? "added";
+    try {
+      imageData.value = await api.getImageDiff(repo.repo.root, repo.selectedPath, f?.oldPath ?? null, kind);
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  },
+  { immediate: true },
+);
 watch(
   () => settings.renderSideBySide,
   (v) => editor?.updateOptions({ renderSideBySide: v }),
@@ -385,9 +442,29 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="diff-pane">
-    <div v-show="!contentMode" ref="container" class="editor"></div>
-    <div v-show="contentMode && !showMdPreview" ref="plainContainer" class="editor"></div>
+    <div v-show="!contentMode && !isImageView" ref="container" class="editor"></div>
+    <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor"></div>
     <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
+
+    <div v-if="isImageView" class="image-diff">
+      <div v-if="imageData?.original" class="img-pane">
+        <div class="img-label">原始</div>
+        <div class="img-box"><img :src="imageData.original" alt="原始" /></div>
+      </div>
+      <div v-if="imageData?.modified" class="img-pane">
+        <div class="img-label">{{ imageData.original ? "当前" : "内容" }}</div>
+        <div class="img-box"><img :src="imageData.modified" alt="当前" /></div>
+      </div>
+      <div v-if="imageData && !imageData.original && !imageData.modified" class="img-pane">
+        <div class="img-label muted">无法预览（超过 5MB 或读取失败）</div>
+      </div>
+    </div>
+
+    <div v-if="!contentMode && !isImageView && navList.length" class="diff-nav">
+      <button title="上一处改动 (Shift+F7)" @click="goToDiff(-1)">↑</button>
+      <span>{{ navIdx >= 0 ? navIdx + 1 : "·" }}/{{ navList.length }}</span>
+      <button title="下一处改动 (F7)" @click="goToDiff(1)">↓</button>
+    </div>
     <div v-if="isMarkdown" class="md-toggle">
       <button :class="{ active: mdPreviewOn }" @click="mdPreviewOn = true">预览</button>
       <button :class="{ active: !mdPreviewOn }" @click="mdPreviewOn = false">源码</button>

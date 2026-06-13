@@ -374,6 +374,70 @@ pub async fn search_text(
     Ok(hits)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDiff {
+    /// data URL of the HEAD version (None for added/untracked)
+    pub original: Option<String>,
+    /// data URL of the working-tree version (None for deleted)
+    pub modified: Option<String>,
+}
+
+fn image_mime(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit('.').next()?.to_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        _ => return None,
+    })
+}
+
+fn data_url(mime: &str, bytes: &[u8]) -> String {
+    use base64::Engine;
+    format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Before/after data URLs for an image file (working tree vs HEAD).
+#[tauri::command]
+pub async fn get_image_diff(
+    repo: String,
+    path: String,
+    old_path: Option<String>,
+    kind: ChangeKind,
+) -> Result<ImageDiff, String> {
+    let repo = PathBuf::from(repo);
+    let mime = image_mime(&path).ok_or("不支持的图片格式")?;
+    let base = base_ref(&repo);
+    let head_rel = old_path.unwrap_or_else(|| path.clone());
+
+    let mut original = None;
+    if kind != ChangeKind::Added && kind != ChangeKind::Untracked {
+        let spec = format!("{base}:{head_rel}");
+        if let Ok(bytes) = run_git(&repo, &["show", &spec], None) {
+            if bytes.len() as u64 <= MAX_FILE_SIZE {
+                original = Some(data_url(mime, &bytes));
+            }
+        }
+    }
+    let mut modified = None;
+    if kind != ChangeKind::Deleted {
+        let full = repo.join(&path);
+        if let Ok(meta) = std::fs::metadata(&full) {
+            if meta.len() <= MAX_FILE_SIZE {
+                if let Ok(bytes) = std::fs::read(&full) {
+                    modified = Some(data_url(mime, &bytes));
+                }
+            }
+        }
+    }
+    Ok(ImageDiff { original, modified })
+}
+
 /// repo to open on launch, from AI_DIFF_OPEN_REPO (or legacy VITE_OPEN_REPO);
 /// read on the Rust side so it works regardless of how vite resolves env.
 /// Only the main window auto-opens — extra windows start empty.

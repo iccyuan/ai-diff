@@ -7,6 +7,7 @@ import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
 import ViewTabs from "./components/ViewTabs.vue";
+import SummaryView from "./components/SummaryView.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
@@ -15,6 +16,7 @@ import QuickOpen from "./components/QuickOpen.vue";
 import SearchPanel from "./components/SearchPanel.vue";
 import SymbolChooser from "./components/SymbolChooser.vue";
 import { openQuickOpen, openFindDialog } from "./lib/palette";
+import { checkForUpdate } from "./lib/update";
 import { useRepoStore } from "./stores/repo";
 import { useSettingsStore } from "./stores/settings";
 
@@ -69,6 +71,8 @@ onMounted(async () => {
   // resolved by the Rust side so it works regardless of vite env plumbing
   const auto = await invoke<string | null>("auto_open_path");
   if (auto) useRepoStore().openRepo(auto);
+  // silent update check shortly after launch (main window, prod builds only)
+  setTimeout(() => checkForUpdate(false), 3000);
 });
 </script>
 
@@ -80,7 +84,8 @@ onMounted(async () => {
       <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
       <div class="center-col">
         <ViewTabs />
-        <DiffView />
+        <SummaryView v-if="repo.ws && !repo.activeTabId" />
+        <DiffView v-show="!(repo.ws && !repo.activeTabId)" />
       </div>
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>

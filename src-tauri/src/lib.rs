@@ -61,7 +61,8 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             setup_tray(app)?;
@@ -80,7 +81,14 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .manage(watcher::WatcherState(std::sync::Mutex::new(
             std::collections::HashMap::new(),
-        )))
+        )));
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             git::open_repo,
             git::get_status,
@@ -95,6 +103,7 @@ pub fn run() {
             git::get_commit_file_diff,
             git::auto_open_path,
             git::search_text,
+            git::get_image_diff,
             watcher::watch_repo,
             watcher::unwatch_repo,
             new_window

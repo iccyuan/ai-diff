@@ -49,13 +49,21 @@ diff，并支持整体还原 / 单文件还原 / 单个修改块（hunk）还原
 安装包：Windows 用 `.exe`（NSIS 用户级一键安装，自动建开始菜单/桌面快捷
 方式，无需管理员权限）；macOS 用 `.dmg`；Linux 用 `.deb` / `.AppImage`。
 
-## 发布
+## 发布与自动更新
 
 推送 `v*` 标签即触发 GitHub Actions 三平台构建并自动发布 Release：
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
 ```
+
+应用启动时（及设置里「检查更新」）会比对 GitHub 最新 Release 自助升级。
+要让签名校验通过，需在仓库 Settings → Secrets 配置：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：`tauri signer generate` 生成的私钥内容
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥密码（无密码则留空）
+
+公钥已写入 `src-tauri/tauri.conf.json`；CI 会用私钥签名并产出 `latest.json`。
 
 ## 开发
 

@@ -1,5 +1,6 @@
 import * as monaco from "monaco-editor";
 import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 
 // fonts ship with the app (woff2 bundled by vite) — no system fonts required
 import "@fontsource/jetbrains-mono/400.css";
@@ -25,10 +26,34 @@ import chromeDevtools from "./themes/chrome-devtools.json";
 import dawn from "./themes/dawn.json";
 import clouds from "./themes/clouds.json";
 
-// without this Monaco freezes: it cannot create its editor worker under Vite
+// without this Monaco freezes: it cannot create its editor worker under Vite.
+// the TS worker powers in-file semantic navigation (F12) and type hovers.
 self.MonacoEnvironment = {
-  getWorker: () => new EditorWorker(),
+  getWorker(_id: string, label: string) {
+    if (label === "typescript" || label === "javascript") return new TsWorker();
+    return new EditorWorker();
+  },
 };
+
+// real TS/JS semantics: keep go-to-definition + type hovers, but turn off
+// semantic diagnostics so single-file viewing isn't littered with
+// "cannot find module" errors from imports we don't load into the worker.
+// (root export types languages.typescript as a deprecated stub; the runtime
+// API is present once the full package is imported, so reach it via any.)
+const ts = (monaco.languages as unknown as { typescript?: any }).typescript;
+if (ts) {
+  for (const d of [ts.typescriptDefaults, ts.javascriptDefaults]) {
+    d.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+    d.setCompilerOptions({
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.NodeJs,
+      jsx: ts.JsxEmit.Preserve,
+      allowJs: true,
+      allowNonTsExtensions: true,
+    });
+  }
+}
 
 const CUSTOM_THEMES: Record<string, unknown> = {
   "github-light": githubLight,

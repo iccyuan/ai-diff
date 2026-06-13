@@ -48,6 +48,7 @@ async function revertAll() {
 
     <div class="spacer"></div>
 
+    <button class="btn" :disabled="!repo.repo" title="改动总览" @click="repo.clearActiveView()">摘要</button>
     <button class="btn icon" :disabled="!repo.repo" title="重新读取更改列表（已自动监听，手动刷新作兜底）" @click="repo.refresh()">
       ⟳
     </button>
