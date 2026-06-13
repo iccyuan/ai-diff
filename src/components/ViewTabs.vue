@@ -153,21 +153,23 @@ function onStripPointerDown(e: PointerEvent) {
       @wheel="onWheel"
       @pointerdown="onStripPointerDown"
     >
-      <div
-        v-for="(t, i) in repo.tabs"
-        :key="t.id"
-        class="vtab"
-        :class="{ active: t.id === repo.activeTabId, dragging: drag?.moved && drag.id === t.id }"
-        :title="(t.commit ? `${t.commit.slice(0, 7)} · ` : '') + t.path"
-        @pointerdown="onTabPointerDown(i, t.id, $event)"
-        @mousedown.middle.prevent="repo.closeTab(t.id)"
-        @contextmenu.prevent="openMenu($event, t.id)"
-      >
-        <img class="vicon" :src="fileIcon(t.path)" alt="" />
-        <span class="vtitle">{{ t.title }}</span>
-        <span v-if="t.commit" class="vhash">{{ t.commit.slice(0, 7) }}</span>
-        <button class="vclose" title="关闭" @click.stop="repo.closeTab(t.id)">✕</button>
-      </div>
+      <TransitionGroup tag="div" name="tab" class="tab-track">
+        <div
+          v-for="(t, i) in repo.tabs"
+          :key="t.id"
+          class="vtab"
+          :class="{ active: t.id === repo.activeTabId, dragging: drag?.moved && drag.id === t.id }"
+          :title="(t.commit ? `${t.commit.slice(0, 7)} · ` : '') + t.path"
+          @pointerdown="onTabPointerDown(i, t.id, $event)"
+          @mousedown.middle.prevent="repo.closeTab(t.id)"
+          @contextmenu.prevent="openMenu($event, t.id)"
+        >
+          <img class="vicon" :src="fileIcon(t.path)" alt="" />
+          <span class="vtitle">{{ t.title }}</span>
+          <span v-if="t.commit" class="vhash">{{ t.commit.slice(0, 7) }}</span>
+          <button class="vclose" title="关闭" @click.stop="repo.closeTab(t.id)">✕</button>
+        </div>
+      </TransitionGroup>
     </div>
     <button v-if="canRight" class="tab-arrow" title="向右滚动" @click="scrollBy(1)">›</button>
 

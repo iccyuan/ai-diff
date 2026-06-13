@@ -615,11 +615,21 @@ input[type="checkbox"] {
   flex: 1;
   min-width: 0;
   display: flex;
-  gap: 4px;
   padding: 4px 8px;
   background: var(--bg);
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+/* flex row of tabs; TransitionGroup animates reordering via FLIP */
+.tab-track {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.tab-move {
+  transition: transform 0.18s cubic-bezier(0.2, 0, 0.2, 1);
 }
 
 /* hide the strip scrollbar — overflow is handled by the arrows */
@@ -633,10 +643,14 @@ input[type="checkbox"] {
   user-select: none;
 }
 
+/* clearly "picked up": accent ring + lift, no transform (FLIP owns transform) */
 .vtab.dragging {
-  background: var(--bg-active);
-  box-shadow: var(--shadow);
-  opacity: 0.85;
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-panel));
+  color: var(--fg);
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1.5px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  z-index: 5;
 }
 
 .vtab {
