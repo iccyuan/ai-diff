@@ -554,6 +554,15 @@ fn count_lines(full: &Path) -> Option<u32> {
     Some(newlines + if bytes.last().is_some_and(|&b| b != b'\n') { 1 } else { 0 })
 }
 
+/// Refresh the index's stat cache so `git diff HEAD` doesn't report a stale
+/// "clean" tree. Without this, the first status read after opening a repo can
+/// miss real changes (git's stat shortcut skips content comparison when the
+/// cached stat still matches); `git status` does this implicitly, we don't.
+/// Exits non-zero when entries need updating — that's expected, so ignore it.
+fn refresh_index(repo: &Path) {
+    let _ = run_git(repo, &["update-index", "-q", "--refresh"], None);
+}
+
 fn attach_numstat(repo: &Path, base: &str, target: Option<&str>, files: &mut [FileStatus]) {
     let mut args = vec!["diff", base];
     if let Some(t) = target {
@@ -573,6 +582,7 @@ fn attach_numstat(repo: &Path, base: &str, target: Option<&str>, files: &mut [Fi
 #[tauri::command]
 pub async fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
+    refresh_index(&repo);
     let base = base_ref(&repo);
     let tracked = run_git_text(
         &repo,
@@ -761,6 +771,7 @@ pub async fn get_file_diff(
     if kind == ChangeKind::Untracked {
         return untracked_diff(&repo, &path);
     }
+    refresh_index(&repo); // avoid stale-clean hunks (see get_status)
 
     let base = base_ref(&repo);
     let wt_path = repo.join(&path);
