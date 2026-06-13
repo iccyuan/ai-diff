@@ -10,6 +10,7 @@
   --accent: #0a7aff;
   --danger: #e0302e;
   --ok: #1a8f3c;
+  --untracked: #1a8f3c;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 
@@ -25,6 +26,7 @@
   --accent: #409cff;
   --danger: #ff6961;
   --ok: #4cc466;
+  --untracked: #4cc466;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -428,6 +430,11 @@ input[type="checkbox"] {
   text-overflow: ellipsis;
 }
 
+/* git-untracked files (no record in git) stand out in green, like VS Code */
+.file-list li.untracked .path {
+  color: var(--untracked);
+}
+
 /* file-type logo with optional change-status overlay on its corner */
 .ficon {
   position: relative;
@@ -545,14 +552,53 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
-.view-tabs {
+/* tab bar = optional ‹ arrow + scrollable strip + optional › arrow */
+.tabs-bar {
   flex: none;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg);
+}
+
+.tab-arrow {
+  flex: none;
+  border: none;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  width: 26px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-arrow:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.view-tabs {
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 4px;
   padding: 4px 8px;
   background: var(--bg);
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+/* hide the strip scrollbar — overflow is handled by the arrows */
+.view-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.vtab.dragging {
+  background: var(--bg-active);
+  box-shadow: var(--shadow);
+  opacity: 0.85;
 }
 
 .vtab {
@@ -564,6 +610,8 @@ input[type="checkbox"] {
   cursor: pointer;
   color: var(--fg-muted);
   white-space: nowrap;
+  /* keep their size and let the strip overflow (Notepad++ style) */
+  flex: 0 0 auto;
   max-width: 200px;
   transition:
     background 0.1s ease,

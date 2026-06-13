@@ -332,6 +332,14 @@ export const useRepoStore = defineStore("repo", {
         await this.loadContent(w, tab.path);
       }
     },
+    moveTab(from: number, to: number) {
+      const w = this.ws;
+      if (!w) return;
+      const n = w.tabs.length;
+      if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+      const [t] = w.tabs.splice(from, 1);
+      w.tabs.splice(to, 0, t);
+    },
     closeTab(id: string) {
       const w = this.ws;
       if (!w) return;
