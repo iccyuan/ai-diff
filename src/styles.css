@@ -648,6 +648,9 @@ input[type="checkbox"] {
   cursor: pointer;
   color: var(--fg-muted);
   white-space: nowrap;
+  /* no text selection while dragging to reorder */
+  user-select: none;
+  touch-action: none;
   /* keep their size and let the strip overflow (Notepad++ style) */
   flex: 0 0 auto;
   max-width: 200px;

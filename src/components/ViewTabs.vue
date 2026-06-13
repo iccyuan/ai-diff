@@ -114,6 +114,7 @@ function onTabPointerUp() {
 }
 function onTabPointerDown(i: number, id: string, e: PointerEvent) {
   if (e.button !== 0 || (e.target as HTMLElement).closest(".vclose")) return;
+  e.preventDefault(); // stop the browser starting a text selection on the title
   drag.value = { index: i, id, startX: e.clientX, moved: false };
   window.addEventListener("pointermove", onTabPointerMove);
   window.addEventListener("pointerup", onTabPointerUp, { once: true });
