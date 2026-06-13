@@ -626,10 +626,16 @@ input[type="checkbox"] {
   display: flex;
   gap: 4px;
   flex: 0 0 auto;
+  position: relative; /* tabs' offsetLeft is measured against this */
 }
 
 .tab-move {
   transition: transform 0.18s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* the picked-up tab snaps to its slot; only the neighbors slide */
+.vtab.dragging {
+  transition: none;
 }
 
 /* hide the strip scrollbar — overflow is handled by the arrows */

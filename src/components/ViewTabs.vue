@@ -94,15 +94,17 @@ const drag = ref<{ index: number; id: string; startX: number; moved: boolean } |
 let lastX = 0;
 let autoTimer: number | null = null;
 
-// move the dragged tab to whatever tab sits under x
+// move the dragged tab to whatever tab sits under x.
+// hit-test against layout positions (offsetLeft), NOT getBoundingClientRect:
+// during the FLIP slide the rects are mid-transform, which made the drop
+// slot oscillate and the tabs flicker. offsetLeft ignores the transform.
 function reorderAt(x: number) {
   const s = drag.value;
-  if (!s) return;
-  const tabs = [...(strip.value?.querySelectorAll<HTMLElement>(".vtab") ?? [])];
-  const over = tabs.findIndex((el) => {
-    const r = el.getBoundingClientRect();
-    return x >= r.left && x <= r.right;
-  });
+  const track = strip.value?.querySelector<HTMLElement>(".tab-track");
+  if (!s || !track) return;
+  const px = x - track.getBoundingClientRect().left;
+  const tabs = [...track.querySelectorAll<HTMLElement>(".vtab")];
+  const over = tabs.findIndex((el) => px >= el.offsetLeft && px <= el.offsetLeft + el.offsetWidth);
   if (over >= 0 && over !== s.index) {
     repo.moveTab(s.index, over);
     s.index = over;
