@@ -266,7 +266,10 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         </li>
         <li
           v-else
-          :class="{ active: row.path === repo.selectedPath, untracked: row.status?.kind === 'untracked' }"
+          :class="[
+            row.status ? 'k-' + row.status.kind : '',
+            { active: row.path === repo.selectedPath },
+          ]"
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="onRowClick(row)"
         >

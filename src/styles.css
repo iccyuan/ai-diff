@@ -10,7 +10,11 @@
   --accent: #0a7aff;
   --danger: #e0302e;
   --ok: #1a8f3c;
-  --untracked: #1a8f3c;
+  --st-modified: #b3791a;
+  --st-added: #1a8f3c;
+  --st-deleted: #cf222e;
+  --st-renamed: #8250df;
+  --st-untracked: #cf222e;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 
@@ -26,7 +30,11 @@
   --accent: #409cff;
   --danger: #ff6961;
   --ok: #4cc466;
-  --untracked: #4cc466;
+  --st-modified: #e0b341;
+  --st-added: #4cc466;
+  --st-deleted: #ff6961;
+  --st-renamed: #b083f0;
+  --st-untracked: #ff6961;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
@@ -81,9 +89,10 @@ body,
 }
 
 body {
+  /* prefer the statically-hinted "Segoe UI" over the variable face, which
+     renders softer at small px on Windows; keeps mac/CJK fallbacks */
   font-family:
     -apple-system,
-    "Segoe UI Variable Text",
     "Segoe UI",
     "PingFang SC",
     "HarmonyOS Sans SC",
@@ -94,7 +103,12 @@ body {
   font-size: 13px;
   color: var(--fg);
   background: var(--bg);
+  /* sharper text: subpixel/grayscale AA per platform, no faux-bold blur,
+     enable kerning/ligatures */
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
 }
 
 :focus-visible {
@@ -430,9 +444,27 @@ input[type="checkbox"] {
   text-overflow: ellipsis;
 }
 
-/* git-untracked files (no record in git) stand out in green, like VS Code */
-.file-list li.untracked .path {
-  color: var(--untracked);
+/* git-status coloring of file names in the tree */
+.file-list li.k-modified .path {
+  color: var(--st-modified);
+}
+
+.file-list li.k-added .path {
+  color: var(--st-added);
+}
+
+.file-list li.k-renamed .path {
+  color: var(--st-renamed);
+}
+
+.file-list li.k-untracked .path {
+  color: var(--st-untracked);
+}
+
+.file-list li.k-deleted .path {
+  color: var(--st-deleted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
 }
 
 /* file-type logo with optional change-status overlay on its corner */
