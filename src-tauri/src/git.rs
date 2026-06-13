@@ -332,7 +332,7 @@ pub struct SearchHit {
 /// Repo-wide fixed-string search via `git grep` (tracked + untracked,
 /// binary files skipped). whole_word approximates symbol lookup.
 #[tauri::command]
-pub fn search_text(
+pub async fn search_text(
     repo: String,
     query: String,
     whole_word: bool,
@@ -389,7 +389,7 @@ pub fn auto_open_path(window: tauri::Window) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn open_repo(path: String) -> Result<RepoInfo, String> {
+pub async fn open_repo(path: String) -> Result<RepoInfo, String> {
     let mut p = PathBuf::from(&path);
     // dropping a file counts as its directory; rev-parse walks up to the root
     if p.is_file() {
@@ -427,7 +427,7 @@ pub struct FileContent {
 /// All files in the project view: tracked (incl. staged) + untracked,
 /// .gitignore respected. NUL-separated, repo-relative forward slashes.
 #[tauri::command]
-pub fn list_files(repo: String) -> Result<Vec<String>, String> {
+pub async fn list_files(repo: String) -> Result<Vec<String>, String> {
     let repo = PathBuf::from(repo);
     let out = run_git_text(
         &repo,
@@ -444,7 +444,7 @@ pub fn list_files(repo: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn read_file(repo: String, path: String) -> Result<FileContent, String> {
+pub async fn read_file(repo: String, path: String) -> Result<FileContent, String> {
     let full = PathBuf::from(&repo).join(&path);
     let meta = std::fs::metadata(&full).map_err(|e| format!("无法读取 {path}: {e}"))?;
     if meta.len() > MAX_FILE_SIZE {
@@ -507,7 +507,7 @@ fn attach_numstat(repo: &Path, base: &str, target: Option<&str>, files: &mut [Fi
 }
 
 #[tauri::command]
-pub fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
+pub async fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
     let base = base_ref(&repo);
     let tracked = run_git_text(
@@ -549,7 +549,7 @@ fn parent_ref(repo: &Path, hash: &str) -> String {
 }
 
 #[tauri::command]
-pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
+pub async fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
     let repo = PathBuf::from(repo);
     if base_ref(&repo) != "HEAD" {
         return Ok(Vec::new()); // empty repo: no history yet
@@ -606,7 +606,7 @@ pub fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo
 }
 
 #[tauri::command]
-pub fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
+pub async fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
     let parent = parent_ref(&repo, &hash);
     let out = run_git_text(
@@ -631,7 +631,7 @@ pub fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, Strin
 /// Diff of one file within a historical commit (parent vs commit).
 /// No hunks/file_header: history view is read-only, nothing to revert.
 #[tauri::command]
-pub fn get_commit_file_diff(
+pub async fn get_commit_file_diff(
     repo: String,
     hash: String,
     path: String,
@@ -686,7 +686,7 @@ pub fn get_commit_file_diff(
 }
 
 #[tauri::command]
-pub fn get_file_diff(
+pub async fn get_file_diff(
     repo: String,
     path: String,
     old_path: Option<String>,
@@ -770,7 +770,7 @@ pub fn get_file_diff(
 }
 
 #[tauri::command]
-pub fn revert_file(
+pub async fn revert_file(
     repo: String,
     path: String,
     old_path: Option<String>,
@@ -807,7 +807,7 @@ pub fn revert_file(
 }
 
 #[tauri::command]
-pub fn revert_hunk(repo: String, path: String, patch: String) -> Result<(), String> {
+pub async fn revert_hunk(repo: String, path: String, patch: String) -> Result<(), String> {
     let repo = PathBuf::from(repo);
     let mut patch = patch;
     if !patch.ends_with('\n') {
@@ -843,7 +843,7 @@ pub fn revert_hunk(repo: String, path: String, patch: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub fn revert_all(repo: String) -> Result<(), String> {
+pub async fn revert_all(repo: String) -> Result<(), String> {
     let repo = PathBuf::from(repo);
     if base_ref(&repo) != "HEAD" {
         return Err("仓库还没有任何提交，无法整体还原".to_string());
@@ -945,6 +945,70 @@ mod tests {
 #[cfg(test)]
 mod repo_tests {
     use super::*;
+
+    // The commands are async (so Tauri runs them off the UI thread); these
+    // same-named sync wrappers shadow the glob import above so the existing
+    // synchronous tests keep calling them unchanged.
+    fn bl<F: std::future::Future>(f: F) -> F::Output {
+        tauri::async_runtime::block_on(f)
+    }
+    fn open_repo(path: String) -> Result<RepoInfo, String> {
+        bl(super::open_repo(path))
+    }
+    fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
+        bl(super::get_status(repo))
+    }
+    fn list_files(repo: String) -> Result<Vec<String>, String> {
+        bl(super::list_files(repo))
+    }
+    fn read_file(repo: String, path: String) -> Result<FileContent, String> {
+        bl(super::read_file(repo, path))
+    }
+    fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
+        bl(super::log_commits(repo, skip, count))
+    }
+    fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
+        bl(super::commit_files(repo, hash))
+    }
+    fn get_commit_file_diff(
+        repo: String,
+        hash: String,
+        path: String,
+        old_path: Option<String>,
+        kind: ChangeKind,
+    ) -> Result<FileDiff, String> {
+        bl(super::get_commit_file_diff(repo, hash, path, old_path, kind))
+    }
+    fn get_file_diff(
+        repo: String,
+        path: String,
+        old_path: Option<String>,
+        kind: ChangeKind,
+    ) -> Result<FileDiff, String> {
+        bl(super::get_file_diff(repo, path, old_path, kind))
+    }
+    fn revert_file(
+        repo: String,
+        path: String,
+        old_path: Option<String>,
+        kind: ChangeKind,
+    ) -> Result<(), String> {
+        bl(super::revert_file(repo, path, old_path, kind))
+    }
+    fn revert_hunk(repo: String, path: String, patch: String) -> Result<(), String> {
+        bl(super::revert_hunk(repo, path, patch))
+    }
+    fn revert_all(repo: String) -> Result<(), String> {
+        bl(super::revert_all(repo))
+    }
+    fn search_text(
+        repo: String,
+        query: String,
+        whole_word: bool,
+        max: u32,
+    ) -> Result<Vec<SearchHit>, String> {
+        bl(super::search_text(repo, query, whole_word, max))
+    }
 
     struct TempRepo(PathBuf);
 
