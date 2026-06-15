@@ -1,4 +1,4 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { listen } from "@tauri-apps/api/event";
 import {
   api,
@@ -248,6 +248,10 @@ export const useRepoStore = defineStore("repo", {
       if (this.viewMode === mode) return;
       this.viewMode = mode;
       if (mode === "all") await this.ensureAllFiles();
+      // the active working-tree tab flips diff <-> content with the mode
+      const w = this.ws;
+      const active = w?.tabs.find((t) => t.id === w.activeTabId);
+      if (w && active && !active.commit) await this.loadForTab(w, active);
     },
     async ensureAllFiles() {
       const w = this.ws;
@@ -271,7 +275,7 @@ export const useRepoStore = defineStore("repo", {
     async selectFile(f: FileStatus) {
       await this.selectPath(f.path);
     },
-    /** open (or focus) a working-tree tab: changed files show a diff, clean files read-only content */
+    /** open (or focus) a working-tree tab: 更改 shows a diff for changed files, 全部文件 shows content */
     async selectPath(path: string) {
       await this.openTab({
         id: `wt:${path}`,
@@ -327,8 +331,9 @@ export const useRepoStore = defineStore("repo", {
         }
         return;
       }
+      // 更改 view shows a diff for changed files; 全部文件 always shows content
       const st = w.files.find((f) => f.path === tab.path);
-      if (st) {
+      if (st && this.viewMode === "changes") {
         await this.loadDiff(w, st);
       } else {
         await this.loadContent(w, tab.path);
@@ -507,3 +512,8 @@ export const useRepoStore = defineStore("repo", {
     },
   },
 });
+
+// hot-replace this store's actions on edit instead of keeping the stale instance
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useRepoStore, import.meta.hot));
+}

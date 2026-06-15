@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -9,6 +9,7 @@ import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
 import { openFindDialog, openChooser } from "../lib/palette";
 import { api, type Hunk, type ImageDiff } from "../lib/api";
+import { isVectorSource, vectorDataUrl } from "../lib/vector";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
 
@@ -18,13 +19,25 @@ const container = ref<HTMLElement | null>(null);
 const plainContainer = ref<HTMLElement | null>(null);
 
 // ----- image before/after preview -----
+// raster formats arrive as binary and are decoded by the backend. vector
+// formats (svg + Android vector drawables) are text, converted in the browser,
+// and get a preview/source toggle like markdown. .9.png nine-patches already
+// match ".png" and preview as plain PNG.
 const IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"];
-const imageData = ref<ImageDiff | null>(null);
-const isImageView = computed(() => {
-  const p = repo.selectedPath; // working-tree files only; history image diffs fall back to notice
-  if (!p || !IMAGE_EXTS.some((e) => p.toLowerCase().endsWith(e))) return false;
+const imageData = ref<ImageDiff | null>(null); // raster, fetched from backend
+const vecPreviewOn = ref(true);
+const isRasterImage = computed(() => {
+  const p = repo.selectedPath?.toLowerCase() ?? ""; // working-tree files only; history image diffs fall back to notice
+  if (!IMAGE_EXTS.some((e) => p.endsWith(e))) return false;
   return (!!repo.diff && repo.diff.isBinary) || (!!repo.content && repo.content.isBinary);
 });
+// vectors preview like markdown: only when viewing a single file's content
+// (全部文件 / content mode), with a 预览/源码 toggle. The 更改 (diff) view just
+// shows the textual XML diff — no preview, no toggle.
+const isVectorImage = computed(() => contentMode.value && isVectorSource(repo.selectedPath ?? "", repo.content?.content));
+const vectorCurrent = computed(() => vectorDataUrl(repo.selectedPath ?? "", repo.content?.content ?? null));
+const isImageView = computed(() => isRasterImage.value || (isVectorImage.value && vecPreviewOn.value));
+const previewData = computed<ImageDiff | null>(() => (isRasterImage.value ? imageData.value : null));
 
 // ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
 const navList = ref<number[]>([]);
@@ -429,10 +442,10 @@ onMounted(() => {
 
 watch(() => [repo.diff, repo.content] as const, render);
 watch(
-  () => [repo.activeTabId, isImageView.value] as const,
+  () => [repo.activeTabId, isRasterImage.value] as const,
   async () => {
     imageData.value = null;
-    if (!isImageView.value || !repo.repo || !repo.selectedPath) return;
+    if (!isRasterImage.value || !repo.repo || !repo.selectedPath) return;
     const f = repo.selected;
     // changed image → real kind; unchanged (all-files) → "added" forces single image
     const kind = f?.kind ?? "added";
@@ -444,6 +457,11 @@ watch(
   },
   { immediate: true },
 );
+// the editors are display:none while the image preview is up, so Monaco can't
+// measure them; force a relayout when we switch back to the text view
+watch(isImageView, (now, was) => {
+  if (was && !now) nextTick(() => (contentMode.value ? plainEditor : editor)?.layout());
+});
 watch(
   () => settings.renderSideBySide,
   (v) => editor?.updateOptions({ renderSideBySide: v }),
@@ -475,16 +493,20 @@ onBeforeUnmount(() => {
     <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor"></div>
     <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
 
-    <div v-if="isImageView" class="image-diff">
-      <div v-if="imageData?.original" class="img-pane">
+    <div v-if="isImageView && isVectorImage" class="image-diff">
+      <div v-if="vectorCurrent" class="img-box"><img :src="vectorCurrent" alt="预览" /></div>
+      <div v-else class="img-empty">无法预览此矢量文件（格式不受支持或解析失败）</div>
+    </div>
+    <div v-else-if="isImageView" class="image-diff">
+      <div v-if="previewData?.original" class="img-pane">
         <div class="img-label">原始</div>
-        <div class="img-box"><img :src="imageData.original" alt="原始" /></div>
+        <div class="img-box"><img :src="previewData.original" alt="原始" /></div>
       </div>
-      <div v-if="imageData?.modified" class="img-pane">
-        <div class="img-label">{{ imageData.original ? "当前" : "内容" }}</div>
-        <div class="img-box"><img :src="imageData.modified" alt="当前" /></div>
+      <div v-if="previewData?.modified" class="img-pane">
+        <div class="img-label">{{ previewData.original ? "当前" : "内容" }}</div>
+        <div class="img-box"><img :src="previewData.modified" alt="当前" /></div>
       </div>
-      <div v-if="imageData && !imageData.original && !imageData.modified" class="img-pane">
+      <div v-if="previewData && !previewData.original && !previewData.modified" class="img-pane">
         <div class="img-label muted">无法预览（超过 5MB 或读取失败）</div>
       </div>
     </div>
@@ -505,6 +527,10 @@ onBeforeUnmount(() => {
     <div v-if="isMarkdown" class="md-toggle">
       <button :class="{ active: mdPreviewOn }" @click="mdPreviewOn = true">预览</button>
       <button :class="{ active: !mdPreviewOn }" @click="mdPreviewOn = false">源码</button>
+    </div>
+    <div v-if="isVectorImage" class="md-toggle">
+      <button :class="{ active: vecPreviewOn }" @click="vecPreviewOn = true">预览</button>
+      <button :class="{ active: !vecPreviewOn }" @click="vecPreviewOn = false">源码</button>
     </div>
     <div v-if="overlayText" class="overlay">
       <Spinner v-if="repo.loadingDiff" :size="28" />

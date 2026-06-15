@@ -785,6 +785,8 @@ input[type="checkbox"] {
   flex: 1;
   position: relative;
   min-width: 0;
+  /* fallback so nothing shows through while Monaco lays out on view switches */
+  background: var(--bg);
 }
 
 .diff-pane .editor {
@@ -902,6 +904,8 @@ input[type="checkbox"] {
   justify-content: center;
   padding: 20px;
   overflow: auto;
+  /* solid base so the checkerboard (and transparent art) never shows through */
+  background-color: var(--bg-panel);
   /* checkerboard so transparency is visible */
   background-image:
     linear-gradient(45deg, var(--bg-active) 25%, transparent 25%),
@@ -921,6 +925,22 @@ input[type="checkbox"] {
   max-height: 100%;
   object-fit: contain;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+/* vector single-preview: the checkerboard box fills the whole pane */
+.image-diff > .img-box {
+  flex: 1;
+}
+
+.img-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--fg-muted);
+  font-size: 14px;
+  text-align: center;
 }
 
 /* git-native style revert arrow in the modified editor's glyph margin */
@@ -1342,42 +1362,31 @@ input[type="checkbox"] {
   right: 22px;
   z-index: 10;
   display: flex;
-  gap: 0;
+  gap: 2px;
   padding: 2px;
-  background: var(--bg-active);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-}
-
-/* connected segments: only the outer corners are rounded */
-.md-toggle button {
-  border-radius: 0;
-}
-
-.md-toggle button:first-child {
-  border-radius: 6px 0 0 6px;
-}
-
-.md-toggle button:last-child {
-  border-radius: 0 6px 6px 0;
-}
-
-.md-toggle button.active {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
   box-shadow: var(--shadow);
 }
 
 .md-toggle button {
   border: none;
-  background: var(--bg-panel);
+  border-radius: 5px;
+  background: transparent; /* inactive segments show the recessed track */
   color: var(--fg-muted);
   font-size: 12px;
-  padding: 4px 12px;
+  padding: 3px 9px;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
+/* the selected segment is a solid accent-colored pill */
 .md-toggle button.active {
-  background: var(--bg-active);
-  color: var(--fg);
+  background: var(--accent);
+  color: #fff;
   font-weight: 600;
 }
 
