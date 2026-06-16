@@ -1,8 +1,22 @@
-import { defineStore } from "pinia";
+import { acceptHMRUpdate, defineStore } from "pinia";
 import { LazyStore } from "@tauri-apps/plugin-store";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { applyTheme, DEFAULT_EDITOR_FONT_ID, EDITOR_FONTS, fontFamilyFor, THEMES } from "../monaco/setup";
 
 const persist = new LazyStore("settings.json");
+
+/** flip the frosted-glass styling (CSS) and the native acrylic material on/off */
+function applyGlass(on: boolean) {
+  document.documentElement.dataset.glass = on ? "on" : "off";
+  getCurrentWindow()
+    .setEffects({ effects: on ? ["acrylic"] : [] } as never)
+    .catch(() => {});
+}
+
+/** base glass opacity (percent 25–75) → the --glass-op CSS knob */
+function applyGlassOpacity(percent: number) {
+  document.documentElement.style.setProperty("--glass-op", String(percent / 100));
+}
 
 export const useSettingsStore = defineStore("settings", {
   state: () => ({
@@ -12,6 +26,8 @@ export const useSettingsStore = defineStore("settings", {
     editorFont: DEFAULT_EDITOR_FONT_ID,
     editorFontSize: 13,
     sidebarWidth: 300,
+    glassEffect: true,
+    glassOpacity: 54,
   }),
   getters: {
     editorFontFamily(state): string {
@@ -27,16 +43,34 @@ export const useSettingsStore = defineStore("settings", {
         const font = await persist.get<string>("editorFont");
         const size = await persist.get<number>("editorFontSize");
         const width = await persist.get<number>("sidebarWidth");
+        const glass = await persist.get<boolean>("glassEffect");
+        const glassOp = await persist.get<number>("glassOpacity");
         if (theme && THEMES.some((t) => t.id === theme)) this.monacoTheme = theme;
         if (typeof side === "boolean") this.renderSideBySide = side;
         if (Array.isArray(recent)) this.recentRepos = recent;
         if (font && EDITOR_FONTS.some((f) => f.id === font)) this.editorFont = font;
         if (typeof size === "number" && size >= 10 && size <= 24) this.editorFontSize = size;
         if (typeof width === "number" && width >= 200 && width <= 600) this.sidebarWidth = width;
+        if (typeof glass === "boolean") this.glassEffect = glass;
+        if (typeof glassOp === "number" && glassOp >= 25 && glassOp <= 75) this.glassOpacity = glassOp;
       } catch {
         // first launch / unreadable store: keep defaults
       }
       applyTheme(this.monacoTheme);
+      applyGlass(this.glassEffect);
+      applyGlassOpacity(this.glassOpacity);
+    },
+    async setGlassEffect(v: boolean) {
+      this.glassEffect = v;
+      applyGlass(v);
+      await persist.set("glassEffect", v);
+      await persist.save();
+    },
+    async setGlassOpacity(percent: number) {
+      this.glassOpacity = Math.min(75, Math.max(25, Math.round(percent) || 54));
+      applyGlassOpacity(this.glassOpacity);
+      await persist.set("glassOpacity", this.glassOpacity);
+      await persist.save();
     },
     async setTheme(id: string) {
       this.monacoTheme = id;
@@ -71,3 +105,7 @@ export const useSettingsStore = defineStore("settings", {
     },
   },
 });
+
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useSettingsStore, import.meta.hot));
+}

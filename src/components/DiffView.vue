@@ -287,6 +287,7 @@ function renderContent() {
   if (!plainEditor && plainContainer.value) {
     plainEditor = monaco.editor.create(plainContainer.value, {
       readOnly: true,
+      cursorBlinking: "solid", // we blink the caret ourselves in CSS (see .cursor rule)
       automaticLayout: true,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
@@ -399,6 +400,7 @@ onMounted(() => {
   editor = monaco.editor.createDiffEditor(container.value!, {
     readOnly: true,
     originalEditable: false,
+    cursorBlinking: "solid", // we blink the caret ourselves in CSS (see .cursor rule)
     automaticLayout: true,
     renderSideBySide: settings.renderSideBySide,
     hideUnchangedRegions: { enabled: true },

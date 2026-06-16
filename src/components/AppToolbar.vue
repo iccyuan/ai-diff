@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
@@ -9,22 +8,35 @@ import { confirmDialog } from "../lib/confirm";
 const repo = useRepoStore();
 const settings = useSettingsStore();
 const emit = defineEmits<{ (e: "open-settings"): void }>();
-const recentSel = ref("");
+
+// custom recent-repos dropdown (a native <select> popup can't be glassed)
+const recentOpen = ref(false);
+const recentWrap = ref<HTMLElement | null>(null);
+function toggleRecent() {
+  recentOpen.value = !recentOpen.value;
+}
+async function pickRecent(path: string) {
+  recentOpen.value = false;
+  await repo.openRepo(path);
+}
+function onDocPointer(e: MouseEvent) {
+  if (recentWrap.value && !recentWrap.value.contains(e.target as Node)) recentOpen.value = false;
+}
+function onEsc(e: KeyboardEvent) {
+  if (e.key === "Escape") recentOpen.value = false;
+}
+onMounted(() => {
+  window.addEventListener("click", onDocPointer);
+  window.addEventListener("keydown", onEsc);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("click", onDocPointer);
+  window.removeEventListener("keydown", onEsc);
+});
 
 async function pickFolder() {
   const dir = await open({ directory: true, title: "选择 git 仓库目录" });
   if (typeof dir === "string") await repo.openRepo(dir);
-}
-
-function newWindow() {
-  invoke("new_window");
-}
-
-async function openRecent() {
-  if (!recentSel.value) return;
-  const path = recentSel.value;
-  recentSel.value = "";
-  await repo.openRepo(path);
 }
 
 async function revertAll() {
@@ -40,10 +52,14 @@ async function revertAll() {
 <template>
   <header class="toolbar">
     <button class="btn primary" @click="pickFolder">打开项目</button>
-    <select v-if="settings.recentRepos.length" v-model="recentSel" class="recent" @change="openRecent">
-      <option value="" disabled>最近打开…</option>
-      <option v-for="p in settings.recentRepos" :key="p" :value="p">{{ p }}</option>
-    </select>
+    <div v-if="settings.recentRepos.length" ref="recentWrap" class="recent-wrap">
+      <button class="btn" @click="toggleRecent">最近打开 ▾</button>
+      <div v-if="recentOpen" class="recent-menu">
+        <button v-for="p in settings.recentRepos" :key="p" class="recent-item" :title="p" @click="pickRecent(p)">
+          {{ p }}
+        </button>
+      </div>
+    </div>
 
 
     <div class="spacer"></div>
@@ -69,7 +85,6 @@ async function revertAll() {
     >
       历史
     </button>
-    <button class="btn icon" title="新窗口" @click="newWindow">⧉</button>
     <button class="btn icon" title="设置" @click="emit('open-settings')">⚙</button>
   </header>
 </template>

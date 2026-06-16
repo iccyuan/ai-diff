@@ -9,13 +9,23 @@ const canLeft = ref(false);
 const canRight = ref(false);
 
 const menu = ref<{ x: number; y: number; tabId: string } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
 let suppressMenu = false; // set when a right-drag pan happened, so it doesn't pop the menu
-function openMenu(e: MouseEvent, tabId: string) {
+async function openMenu(e: MouseEvent, tabId: string) {
   if (suppressMenu) {
     suppressMenu = false;
     return;
   }
   menu.value = { x: e.clientX, y: e.clientY, tabId };
+  // keep the menu inside the viewport (the rightmost tab would clip it otherwise)
+  await nextTick();
+  const el = menuEl.value;
+  if (!el || !menu.value) return;
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const x = Math.max(pad, Math.min(menu.value.x, window.innerWidth - r.width - pad));
+  const y = Math.max(pad, Math.min(menu.value.y, window.innerHeight - r.height - pad));
+  menu.value = { ...menu.value, x, y };
 }
 function closeMenu() {
   menu.value = null;
@@ -211,7 +221,7 @@ function onStripPointerDown(e: PointerEvent) {
     <button v-if="canRight" class="tab-arrow" title="向右滚动" @click="scrollBy(1)">›</button>
 
     <Teleport to="body">
-      <div v-if="menu" class="ctx-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @contextmenu.prevent>
+      <div v-if="menu" ref="menuEl" class="ctx-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @contextmenu.prevent>
         <button @click="run((id) => repo.closeTab(id))">关闭</button>
         <button :disabled="!hasOthers()" @click="run((id) => repo.closeOtherTabs(id))">关闭其他</button>
         <button :disabled="!hasLeft()" @click="run((id) => repo.closeLeftTabs(id))">关闭左边的</button>

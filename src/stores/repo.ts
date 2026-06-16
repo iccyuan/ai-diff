@@ -438,6 +438,18 @@ export const useRepoStore = defineStore("repo", {
       }
       await this.refreshWs(w);
     },
+    /** revert several files in one go, refreshing only once at the end */
+    async revertFiles(files: FileStatus[]) {
+      const w = this.ws;
+      if (!w || !files.length) return;
+      try {
+        for (const f of files) await api.revertFile(w.repo.root, f);
+        toast(`已还原 ${files.length} 个文件`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
     async revertHunk(hunk: Hunk) {
       const w = this.ws;
       if (!w || !w.diff || !this.selected) return;

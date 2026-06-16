@@ -60,6 +60,28 @@ const settings = useSettingsStore();
           <span>并排（side-by-side）显示 diff</span>
         </label>
 
+        <label class="field row">
+          <input
+            type="checkbox"
+            :checked="settings.glassEffect"
+            @change="settings.setGlassEffect(($event.target as HTMLInputElement).checked)"
+          />
+          <span>毛玻璃效果</span>
+        </label>
+
+        <label class="field">
+          <span>毛玻璃透明度：{{ 100 - settings.glassOpacity }}%</span>
+          <input
+            type="range"
+            min="25"
+            max="75"
+            step="1"
+            :disabled="!settings.glassEffect"
+            :value="100 - settings.glassOpacity"
+            @input="settings.setGlassOpacity(100 - Number(($event.target as HTMLInputElement).value))"
+          />
+        </label>
+
         <div class="modal-actions">
           <button class="btn" @click="checkForUpdate(true)">检查更新</button>
           <button class="btn primary" @click="emit('close')">关闭</button>

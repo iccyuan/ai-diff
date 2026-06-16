@@ -112,9 +112,67 @@ function toggleDir(path: string) {
   set.value = s;
 }
 
-function onRowClick(row: FileRow) {
+function openRow(row: FileRow) {
   if (row.status) repo.selectFile(row.status);
   else repo.selectPath(row.path);
+}
+
+// ----- multi-select (Ctrl/Cmd toggle, Shift range) for batch operations -----
+const selected = ref<Set<string>>(new Set());
+let anchor: string | null = null;
+
+function fileOrder(): string[] {
+  return rows.value.filter((r): r is FileRow => r.type === "file").map((r) => r.path);
+}
+
+function onRowClick(row: FileRow, e: MouseEvent) {
+  const path = row.path;
+  if (e.shiftKey && anchor) {
+    const order = fileOrder();
+    const a = order.indexOf(anchor);
+    const b = order.indexOf(path);
+    if (a >= 0 && b >= 0) {
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      selected.value = new Set(order.slice(lo, hi + 1));
+    }
+    openRow(row);
+    return;
+  }
+  if (e.ctrlKey || e.metaKey) {
+    const s = new Set(selected.value);
+    if (s.has(path)) s.delete(path);
+    else s.add(path);
+    selected.value = s;
+    anchor = path;
+    return; // toggle selection only; keep the currently-open file
+  }
+  // plain click: single select + open
+  selected.value = new Set([path]);
+  anchor = path;
+  openRow(row);
+}
+
+// selected files that are actually changed (only those can be reverted)
+const selectedChanged = computed<FileStatus[]>(() => {
+  const map = new Map(repo.files.map((f) => [f.path, f]));
+  return [...selected.value].map((p) => map.get(p)).filter((f): f is FileStatus => !!f);
+});
+
+function clearSelection() {
+  selected.value = new Set();
+  anchor = null;
+}
+
+async function revertSelected() {
+  const files = selectedChanged.value;
+  if (!files.length) return;
+  const ok = await confirmDialog(
+    "还原所选文件",
+    `确定还原所选 ${files.length} 个文件吗？未跟踪文件将被删除，其余还原为 HEAD 版本。此操作不可撤销。`,
+  );
+  if (!ok) return;
+  await repo.revertFiles(files);
+  clearSelection();
 }
 
 function fileTitle(row: FileRow): string {
@@ -150,7 +208,10 @@ function move(delta: number) {
   if (!fileRows.length) return;
   const idx = fileRows.findIndex((r) => r.path === repo.selectedPath);
   const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), fileRows.length - 1);
-  onRowClick(fileRows[next]);
+  const row = fileRows[next];
+  selected.value = new Set([row.path]);
+  anchor = row.path;
+  openRow(row);
 }
 
 function projName(root: string): string {
@@ -268,10 +329,10 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           v-else
           :class="[
             row.status ? 'k-' + row.status.kind : '',
-            { active: row.path === repo.selectedPath },
+            { active: row.path === repo.selectedPath, selected: selected.has(row.path) },
           ]"
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
-          @click="onRowClick(row)"
+          @click="onRowClick(row, $event)"
         >
           <span class="ficon">
             <img :src="fileIcon(row.path)" alt="" />
@@ -297,5 +358,11 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         </ul>
       </template>
     </template>
+
+    <div v-if="selectedChanged.length >= 2" class="sel-bar">
+      <span>已选 {{ selectedChanged.length }} 项</span>
+      <button class="btn danger" @click="revertSelected">还原所选</button>
+      <button class="btn" @click="clearSelection">取消</button>
+    </div>
   </aside>
 </template>

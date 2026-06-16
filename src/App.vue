@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import AppToolbar from "./components/AppToolbar.vue";
 import FileList from "./components/FileList.vue";
 import DiffView from "./components/DiffView.vue";
@@ -42,9 +43,27 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
-// Eclipse shortcuts: Ctrl+Shift+R open resource, Ctrl+H file search
+// Eclipse shortcuts: Ctrl+Shift+R open resource, Ctrl+H file search.
+// IDEA-style double-tap Shift also opens the file search.
+let lastShiftAt = 0;
 function onGlobalKey(e: KeyboardEvent) {
-  if (!repo.repo || !e.ctrlKey) return;
+  if (!repo.repo) return;
+  // double-tap Shift (no other modifier, no key in between) → file search
+  if (e.key === "Shift" && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    const now = Date.now();
+    if (now - lastShiftAt < 400) {
+      lastShiftAt = 0;
+      e.preventDefault();
+      openQuickOpen();
+    } else {
+      lastShiftAt = now;
+    }
+    return;
+  }
+  // any other key cancels a pending double-Shift
+  if (e.key !== "Shift") lastShiftAt = 0;
+
+  if (!e.ctrlKey) return;
   if (e.shiftKey && e.code === "KeyR") {
     e.preventDefault();
     e.stopPropagation();
@@ -56,11 +75,46 @@ function onGlobalKey(e: KeyboardEvent) {
   }
 }
 
+// suppress webview/browser default actions that don't belong in a desktop app
+function onContextMenu(e: MouseEvent) {
+  // keep the native menu in real text fields (right-click paste); block elsewhere
+  const t = e.target as HTMLElement | null;
+  if (t?.closest("input, textarea, [contenteditable='true']")) return;
+  e.preventDefault();
+}
+function blockBrowserDefaults(e: KeyboardEvent) {
+  if (!e.ctrlKey && !e.metaKey) return;
+  // print / save page / view-source / downloads — meaningless here
+  if (!e.shiftKey && !e.altKey && ["KeyP", "KeyS", "KeyU", "KeyJ"].includes(e.code)) {
+    e.preventDefault();
+  }
+}
+
+// size the window to a portion of the screen so it isn't tiny on large /
+// high-resolution displays (the fixed config size looked small there)
+async function fitWindowToScreen() {
+  try {
+    const sw = window.screen.availWidth;
+    const sh = window.screen.availHeight;
+    if (!sw || !sh) return;
+    const w = Math.max(900, Math.min(Math.round(sw * 0.8), 2200));
+    const h = Math.max(600, Math.min(Math.round(sh * 0.85), 1450));
+    const win = getCurrentWindow();
+    await win.setSize(new LogicalSize(w, h));
+    await win.center();
+  } catch {
+    /* fall back to the config size */
+  }
+}
+
 onMounted(async () => {
   // the window starts hidden (tauri.conf visible:false) and is revealed only
   // after Vue mounted with the persisted theme applied — no startup flash
+  await fitWindowToScreen();
   getCurrentWindow().show().catch(() => {});
   window.addEventListener("keydown", onGlobalKey, true);
+  window.addEventListener("keydown", blockBrowserDefaults, true);
+  window.addEventListener("contextmenu", onContextMenu);
   // drag a folder (or any file inside a repo) onto the window to open it
   await getCurrentWebview().onDragDropEvent((e) => {
     if (e.payload.type === "drop" && e.payload.paths.length) {
