@@ -47,6 +47,21 @@ jobs:
 
       - run: npm ci
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          NOTES=$(awk -v h="## v$VER" 'index($0,h)==1{f=1;next} f&&/^## /{exit} f{print}' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES=$'跨平台 Git 更改查看器。\n\n下载对应平台的安装包：\n- Windows: `.exe` / `.msi`\n- macOS: `.dmg`\n- Linux: `.deb` / `.AppImage` / `.rpm`'
+          fi
+          {
+            echo "body<<__CL_EOF__"
+            echo "$NOTES"
+            echo "__CL_EOF__"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -56,11 +71,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "ai-diff ${{ github.ref_name }}"
-          releaseBody: |
-            跨平台 Git 更改查看器。下载对应平台的安装包：
-            - Windows: `.exe`（NSIS，一键用户级安装，自动创建快捷方式）或 `.msi`
-            - macOS: `.dmg`（Apple Silicon 选 aarch64，Intel 选 x64）
-            - Linux: `.deb` / `.AppImage` / `.rpm`
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
