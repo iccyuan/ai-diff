@@ -207,12 +207,13 @@ async function revert(f: FileStatus) {
 }
 
 // ----- right-click context menu (open containing folder / file info) -----
-const menu = ref<{ x: number; y: number; path: string } | null>(null);
+// relPath is null for project rows — they show "打开所在目录" only, no file info
+const menu = ref<{ x: number; y: number; fullPath: string; relPath: string | null } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-async function openMenu(row: FileRow, e: MouseEvent) {
-  menu.value = { x: e.clientX, y: e.clientY, path: row.path };
-  // keep the menu on screen — files near the bottom would clip it otherwise
+async function showMenu(e: MouseEvent, target: { fullPath: string; relPath: string | null }) {
+  menu.value = { x: e.clientX, y: e.clientY, ...target };
+  // keep the menu on screen — rows near the bottom would clip it otherwise
   await nextTick();
   const el = menuEl.value;
   if (!el || !menu.value) return;
@@ -223,19 +224,21 @@ async function openMenu(row: FileRow, e: MouseEvent) {
   menu.value = { ...menu.value, x, y };
 }
 
+function openFileMenu(row: FileRow, e: MouseEvent) {
+  const root = repo.repo?.root;
+  showMenu(e, { fullPath: root ? `${root}/${row.path}` : row.path, relPath: row.path });
+}
+
+function openProjMenu(root: string, e: MouseEvent) {
+  showMenu(e, { fullPath: root, relPath: null });
+}
+
 function closeMenu() {
   menu.value = null;
 }
 
-function fullPath(path: string): string | null {
-  const root = repo.repo?.root;
-  return root ? `${root}/${path}` : null;
-}
-
-async function revealInFolder(path: string) {
+async function revealInFolder(full: string) {
   closeMenu();
-  const full = fullPath(path);
-  if (!full) return;
   try {
     await revealItemInDir(full);
   } catch (err) {
@@ -354,6 +357,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         :class="{ active: i === repo.active, dragging: drag?.moved && drag.index === i }"
         :title="w.repo.root"
         @pointerdown="onProjPointerDown(i, w.repo.root, $event)"
+        @contextmenu.prevent.stop="openProjMenu(w.repo.root, $event)"
       >
         <svg class="chevron" :class="{ open: isExpanded(i, w.repo.root) }" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
@@ -393,7 +397,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           ]"
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="onRowClick(row, $event)"
-          @contextmenu.prevent.stop="openMenu(row, $event)"
+          @contextmenu.prevent.stop="openFileMenu(row, $event)"
         >
           <span class="ficon">
             <img :src="fileIcon(row.path)" alt="" />
@@ -435,8 +439,8 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         @click.stop
         @contextmenu.prevent
       >
-        <button @click="revealInFolder(menu.path)">打开所在目录</button>
-        <button @click="openFileInfo(menu.path)">查看文件信息</button>
+        <button @click="revealInFolder(menu.fullPath)">打开所在目录</button>
+        <button v-if="menu.relPath" @click="openFileInfo(menu.relPath)">查看文件信息</button>
       </div>
     </Teleport>
   </aside>
