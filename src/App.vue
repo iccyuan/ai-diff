@@ -12,6 +12,7 @@ import SummaryView from "./components/SummaryView.vue";
 import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
+import FileInfoDialog from "./components/FileInfoDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
 import SearchPanel from "./components/SearchPanel.vue";
@@ -148,6 +149,7 @@ onMounted(async () => {
     <SearchPanel />
     <SymbolChooser />
     <ConfirmDialog />
+    <FileInfoDialog />
     <ToastHost />
   </div>
 </template>

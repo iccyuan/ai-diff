@@ -540,6 +540,78 @@ pub async fn read_file(repo: String, path: String) -> Result<FileContent, String
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    pub name: String,
+    /// path relative to the repo root (as shown in the tree)
+    pub path: String,
+    /// absolute path on disk
+    pub full_path: String,
+    /// false for deleted files that no longer exist in the working tree
+    pub exists: bool,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub size: u64,
+    pub readonly: bool,
+    /// modification / creation time as unix-epoch milliseconds, when available
+    pub modified: Option<u64>,
+    pub created: Option<u64>,
+    /// best-effort line count; None for binary/large/missing files
+    pub lines: Option<u32>,
+}
+
+fn system_time_millis(t: std::io::Result<std::time::SystemTime>) -> Option<u64> {
+    t.ok()
+        .and_then(|st| st.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+}
+
+/// Filesystem metadata for the file/dir at `path` (relative to `repo`), shown
+/// in the "查看文件信息" dialog. Missing files (e.g. deleted) return exists=false
+/// rather than an error so the dialog can still report the path.
+#[tauri::command]
+pub async fn file_info(repo: String, path: String) -> Result<FileInfo, String> {
+    let full = PathBuf::from(&repo).join(&path);
+    let name = Path::new(&path)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.clone());
+    let full_path = full.to_string_lossy().into_owned();
+    let is_symlink = std::fs::symlink_metadata(&full)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+
+    match std::fs::metadata(&full) {
+        Ok(meta) => Ok(FileInfo {
+            name,
+            path,
+            full_path,
+            exists: true,
+            is_dir: meta.is_dir(),
+            is_symlink,
+            size: meta.len(),
+            readonly: meta.permissions().readonly(),
+            modified: system_time_millis(meta.modified()),
+            created: system_time_millis(meta.created()),
+            lines: if meta.is_dir() { None } else { count_lines(&full) },
+        }),
+        Err(_) => Ok(FileInfo {
+            name,
+            path,
+            full_path,
+            exists: false,
+            is_dir: false,
+            is_symlink,
+            size: 0,
+            readonly: false,
+            modified: None,
+            created: None,
+            lines: None,
+        }),
+    }
+}
+
 /// best-effort line count of an untracked file; None for binary/large
 fn count_lines(full: &Path) -> Option<u32> {
     let meta = std::fs::metadata(full).ok()?;

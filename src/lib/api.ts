@@ -51,6 +51,21 @@ export interface FileContent {
   tooLarge: boolean;
 }
 
+export interface FileInfo {
+  name: string;
+  path: string;
+  fullPath: string;
+  exists: boolean;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  readonly: boolean;
+  /** modification / creation time as unix-epoch milliseconds */
+  modified: number | null;
+  created: number | null;
+  lines: number | null;
+}
+
 export interface ImageDiff {
   /** data URL of the HEAD version (null for added/untracked) */
   original: string | null;
@@ -87,6 +102,7 @@ export const api = {
     invoke<SearchHit[]>("search_text", { repo, query, wholeWord, max }),
   getImageDiff: (repo: string, path: string, oldPath: string | null, kind: ChangeKind) =>
     invoke<ImageDiff>("get_image_diff", { repo, path, oldPath, kind }),
+  fileInfo: (repo: string, path: string) => invoke<FileInfo>("file_info", { repo, path }),
 };
 
 export interface SearchHit {

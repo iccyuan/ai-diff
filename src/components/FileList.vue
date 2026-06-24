@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
+import { showFileInfo } from "../lib/fileInfo";
+import { toast } from "../lib/toast";
 import { fileIcon } from "../lib/fileIcons";
 import Spinner from "./Spinner.vue";
-import type { ChangeKind, FileStatus } from "../lib/api";
+import { api, type ChangeKind, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
 const settings = useSettingsStore();
@@ -203,6 +206,63 @@ async function revert(f: FileStatus) {
   if (await confirmDialog("还原文件", msg)) await repo.revertFile(f);
 }
 
+// ----- right-click context menu (open containing folder / file info) -----
+const menu = ref<{ x: number; y: number; path: string } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+
+async function openMenu(row: FileRow, e: MouseEvent) {
+  menu.value = { x: e.clientX, y: e.clientY, path: row.path };
+  // keep the menu on screen — files near the bottom would clip it otherwise
+  await nextTick();
+  const el = menuEl.value;
+  if (!el || !menu.value) return;
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const x = Math.max(pad, Math.min(menu.value.x, window.innerWidth - r.width - pad));
+  const y = Math.max(pad, Math.min(menu.value.y, window.innerHeight - r.height - pad));
+  menu.value = { ...menu.value, x, y };
+}
+
+function closeMenu() {
+  menu.value = null;
+}
+
+function fullPath(path: string): string | null {
+  const root = repo.repo?.root;
+  return root ? `${root}/${path}` : null;
+}
+
+async function revealInFolder(path: string) {
+  closeMenu();
+  const full = fullPath(path);
+  if (!full) return;
+  try {
+    await revealItemInDir(full);
+  } catch (err) {
+    toast(`无法打开所在目录：${err}`, "error");
+  }
+}
+
+async function openFileInfo(path: string) {
+  closeMenu();
+  const root = repo.repo?.root;
+  if (!root) return;
+  try {
+    showFileInfo(await api.fileInfo(root, path));
+  } catch (err) {
+    toast(`无法读取文件信息：${err}`, "error");
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("click", closeMenu);
+  window.addEventListener("blur", closeMenu);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("click", closeMenu);
+  window.removeEventListener("blur", closeMenu);
+});
+
 function move(delta: number) {
   const fileRows = rows.value.filter((r): r is FileRow => r.type === "file");
   if (!fileRows.length) return;
@@ -333,6 +393,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           ]"
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="onRowClick(row, $event)"
+          @contextmenu.prevent.stop="openMenu(row, $event)"
         >
           <span class="ficon">
             <img :src="fileIcon(row.path)" alt="" />
@@ -364,5 +425,19 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
       <button class="btn danger" @click="revertSelected">还原所选</button>
       <button class="btn" @click="clearSelection">取消</button>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="menu"
+        ref="menuEl"
+        class="ctx-menu"
+        :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button @click="revealInFolder(menu.path)">打开所在目录</button>
+        <button @click="openFileInfo(menu.path)">查看文件信息</button>
+      </div>
+    </Teleport>
   </aside>
 </template>

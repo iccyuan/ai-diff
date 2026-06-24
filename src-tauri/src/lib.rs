@@ -104,6 +104,7 @@ pub fn run() {
             git::auto_open_path,
             git::search_text,
             git::get_image_diff,
+            git::file_info,
             watcher::watch_repo,
             watcher::unwatch_repo,
             new_window
