@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { EDITOR_FONTS, THEMES } from "../monaco/setup";
 import { useSettingsStore } from "../stores/settings";
-import { checkForUpdate } from "../lib/update";
+import { checkForUpdate, updateState } from "../lib/update";
 
 defineProps<{ open: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -83,7 +83,9 @@ const settings = useSettingsStore();
         </label>
 
         <div class="modal-actions">
-          <button class="btn" @click="checkForUpdate(true)">检查更新</button>
+          <button class="btn" :disabled="updateState.busy" @click="checkForUpdate(true)">
+            {{ updateState.busy ? "检查中…" : "检查更新" }}
+          </button>
           <button class="btn primary" @click="emit('close')">关闭</button>
         </div>
       </div>

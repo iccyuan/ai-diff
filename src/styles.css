@@ -2103,6 +2103,10 @@ input[type="checkbox"] {
   border-color: var(--danger);
 }
 
+.toast.progress {
+  border-color: var(--border, var(--fg-muted));
+}
+
 .toast-enter-active,
 .toast-leave-active {
   transition: all 0.2s ease;
