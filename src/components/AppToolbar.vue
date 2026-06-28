@@ -19,6 +19,15 @@ async function pickRecent(path: string) {
   recentOpen.value = false;
   await repo.openRepo(path);
 }
+// split a path (either separator) into its folder name and parent dir
+function projName(p: string): string {
+  return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
+}
+function projDir(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, "");
+  const i = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return i > 0 ? trimmed.slice(0, i) : "";
+}
 function onDocPointer(e: MouseEvent) {
   if (recentWrap.value && !recentWrap.value.contains(e.target as Node)) recentOpen.value = false;
 }
@@ -55,8 +64,13 @@ async function revertAll() {
     <div v-if="settings.recentRepos.length" ref="recentWrap" class="recent-wrap">
       <button class="btn" @click="toggleRecent">最近打开 ▾</button>
       <div v-if="recentOpen" class="recent-menu">
+        <div class="recent-head">最近打开</div>
         <button v-for="p in settings.recentRepos" :key="p" class="recent-item" :title="p" @click="pickRecent(p)">
-          {{ p }}
+          <span class="recent-icon">📁</span>
+          <span class="recent-text">
+            <span class="recent-name">{{ projName(p) }}</span>
+            <span v-if="projDir(p)" class="recent-dir">{{ projDir(p) }}</span>
+          </span>
         </button>
       </div>
     </div>

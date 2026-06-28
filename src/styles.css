@@ -223,18 +223,57 @@ body {
   animation: modal-in 0.1s ease;
 }
 
+/* small section label at the top of the dropdown */
+.recent-head {
+  padding: 4px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
 .recent-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 9px;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   color: var(--fg);
-  font-size: 12px;
   font-family: inherit;
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 7px 10px;
+  border-radius: 7px;
   cursor: pointer;
+  overflow: hidden;
+}
+
+.recent-icon {
+  flex: none;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.recent-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.recent-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recent-dir {
+  font-size: 10.5px;
+  color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -243,6 +282,10 @@ body {
 .recent-item:hover {
   background: var(--accent);
   color: #fff;
+}
+
+.recent-item:hover .recent-dir {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* ---------- buttons / inputs ---------- */
