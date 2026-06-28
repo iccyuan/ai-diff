@@ -488,15 +488,20 @@ pub struct FileContent {
     pub too_large: bool,
 }
 
-/// All files in the project view: tracked (incl. staged) + untracked,
-/// .gitignore respected. NUL-separated, repo-relative forward slashes.
+/// All files in the project view: tracked (incl. staged) + untracked.
+/// When `show_ignored` is false, .gitignore is respected; when true, ignored
+/// files/folders (node_modules, build output, …) are listed too. The .git
+/// directory is always skipped by git itself. NUL-separated, repo-relative
+/// forward slashes.
 #[tauri::command]
-pub async fn list_files(repo: String) -> Result<Vec<String>, String> {
+pub async fn list_files(repo: String, show_ignored: bool) -> Result<Vec<String>, String> {
     let repo = PathBuf::from(repo);
-    let out = run_git_text(
-        &repo,
-        &["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-    )?;
+    let mut args = vec!["ls-files", "--cached", "--others"];
+    if !show_ignored {
+        args.push("--exclude-standard");
+    }
+    args.push("-z");
+    let out = run_git_text(&repo, &args)?;
     let mut files: Vec<String> = out
         .split('\0')
         .filter(|s| !s.is_empty())
@@ -1105,8 +1110,8 @@ mod repo_tests {
     fn get_status(repo: String) -> Result<Vec<FileStatus>, String> {
         bl(super::get_status(repo))
     }
-    fn list_files(repo: String) -> Result<Vec<String>, String> {
-        bl(super::list_files(repo))
+    fn list_files(repo: String, show_ignored: bool) -> Result<Vec<String>, String> {
+        bl(super::list_files(repo, show_ignored))
     }
     fn read_file(repo: String, path: String) -> Result<FileContent, String> {
         bl(super::read_file(repo, path))
@@ -1460,13 +1465,21 @@ mod repo_tests {
         let bin: Vec<u8> = vec![0, 1, 2, 3];
         r.write("bin.dat", &bin);
 
-        let files = list_files(r.root()).unwrap();
+        let files = list_files(r.root(), false).unwrap();
         assert!(files.contains(&"tracked.txt".to_string()));
         assert!(files.contains(&"untracked.txt".to_string()));
         assert!(files.contains(&"bin.dat".to_string()));
         assert!(
             !files.contains(&"ignored.txt".to_string()),
             ".gitignore'd files must not appear in the all-files view"
+        );
+
+        // show_ignored=true surfaces the .gitignore'd file too
+        let with_ignored = list_files(r.root(), true).unwrap();
+        assert!(with_ignored.contains(&"tracked.txt".to_string()));
+        assert!(
+            with_ignored.contains(&"ignored.txt".to_string()),
+            "show_ignored must reveal .gitignore'd files"
         );
 
         let c = read_file(r.root(), "tracked.txt".into()).unwrap();

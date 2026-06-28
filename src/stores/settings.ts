@@ -28,6 +28,8 @@ export const useSettingsStore = defineStore("settings", {
     sidebarWidth: 300,
     glassEffect: true,
     glassOpacity: 54,
+    /** 全部文件 view: also list .gitignore'd / hidden files and folders */
+    showHidden: false,
   }),
   getters: {
     editorFontFamily(state): string {
@@ -45,6 +47,7 @@ export const useSettingsStore = defineStore("settings", {
         const width = await persist.get<number>("sidebarWidth");
         const glass = await persist.get<boolean>("glassEffect");
         const glassOp = await persist.get<number>("glassOpacity");
+        const hidden = await persist.get<boolean>("showHidden");
         if (theme && THEMES.some((t) => t.id === theme)) this.monacoTheme = theme;
         if (typeof side === "boolean") this.renderSideBySide = side;
         if (Array.isArray(recent)) this.recentRepos = recent;
@@ -53,6 +56,7 @@ export const useSettingsStore = defineStore("settings", {
         if (typeof width === "number" && width >= 200 && width <= 600) this.sidebarWidth = width;
         if (typeof glass === "boolean") this.glassEffect = glass;
         if (typeof glassOp === "number" && glassOp >= 25 && glassOp <= 75) this.glassOpacity = glassOp;
+        if (typeof hidden === "boolean") this.showHidden = hidden;
       } catch {
         // first launch / unreadable store: keep defaults
       }
@@ -97,6 +101,11 @@ export const useSettingsStore = defineStore("settings", {
     async setEditorFontSize(size: number) {
       this.editorFontSize = Math.min(24, Math.max(10, Math.round(size) || 13));
       await persist.set("editorFontSize", this.editorFontSize);
+      await persist.save();
+    },
+    async setShowHidden(v: boolean) {
+      this.showHidden = v;
+      await persist.set("showHidden", v);
       await persist.save();
     },
     async saveSidebarWidth() {

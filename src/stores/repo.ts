@@ -221,9 +221,11 @@ export const useRepoStore = defineStore("repo", {
     async refreshWs(w: Workspace) {
       w.loadingStatus = true;
       try {
+        // re-read repo info so a branch switch (or HEAD change) reflects live
+        w.repo = await api.openRepo(w.repo.root);
         w.files = await api.getStatus(w.repo.root);
         if (this.viewMode === "all") {
-          w.allFiles = await api.listFiles(w.repo.root);
+          w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
         }
         if (w.historyOpen) {
           // re-fetch the already-loaded depth so new commits surface on top
@@ -257,10 +259,19 @@ export const useRepoStore = defineStore("repo", {
       const w = this.ws;
       if (!w || w.allFiles.length) return;
       try {
-        w.allFiles = await api.listFiles(w.repo.root);
+        w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
       } catch (e) {
         toast(String(e), "error");
       }
+    },
+    /** flip "显示隐藏的文件和文件夹" and rebuild the all-files list everywhere */
+    async toggleHidden() {
+      const settings = useSettingsStore();
+      await settings.setShowHidden(!settings.showHidden);
+      // every workspace's cached list is now stale; clear so it re-fetches lazily
+      for (const w of this.workspaces) w.allFiles = [];
+      if (this.viewMode !== "all") this.viewMode = "all"; // make the effect visible
+      await this.ensureAllFiles();
     },
     /** open a file (worktree view) and scroll to a specific line */
     async openAtLine(path: string, line: number) {

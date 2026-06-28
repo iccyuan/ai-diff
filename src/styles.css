@@ -363,6 +363,32 @@ input[type="checkbox"] {
   overflow: hidden;
 }
 
+/* scroll container for all project sections; lets the sidebar scroll as one */
+.proj-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.proj-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* FLIP: other sections slide into place while a project is dragged to reorder */
+.proj-move {
+  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* outside of a drag, snap sections to place instantly — animating the FLIP on
+   expand/collapse makes the moving tree overlap the project above it */
+.proj-move-off {
+  transition: none;
+}
+
 /* project sections in the sidebar: header click activates the workspace */
 .proj-header {
   flex: none;
@@ -936,6 +962,19 @@ input[type="checkbox"] {
   height: 1px;
   margin: 4px 8px;
   background: var(--border);
+}
+
+/* checkable context-menu item: fixed-width tick gutter keeps labels aligned */
+.ctx-menu button.ctx-check-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ctx-menu .ctx-check {
+  display: inline-block;
+  width: 12px;
+  flex: none;
+  text-align: center;
 }
 
 /* ---------- diff pane ---------- */

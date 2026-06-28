@@ -85,7 +85,8 @@ export const api = {
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
   unwatchRepo: (repo: string) => invoke<void>("unwatch_repo", { repo }),
-  listFiles: (repo: string) => invoke<string[]>("list_files", { repo }),
+  listFiles: (repo: string, showIgnored: boolean) =>
+    invoke<string[]>("list_files", { repo, showIgnored }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
   logCommits: (repo: string, skip: number, count: number) =>
     invoke<CommitInfo[]>("log_commits", { repo, skip, count }),

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { EDITOR_FONTS, THEMES } from "../monaco/setup";
 import { useSettingsStore } from "../stores/settings";
+import { useRepoStore } from "../stores/repo";
 import { checkForUpdate, updateState } from "../lib/update";
 
 defineProps<{ open: boolean }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 const settings = useSettingsStore();
+const repo = useRepoStore();
 </script>
 
 <template>
@@ -58,6 +60,15 @@ const settings = useSettingsStore();
             @change="settings.setSideBySide(($event.target as HTMLInputElement).checked)"
           />
           <span>并排（side-by-side）显示 diff</span>
+        </label>
+
+        <label class="field row">
+          <input
+            type="checkbox"
+            :checked="settings.showHidden"
+            @change="repo.toggleHidden()"
+          />
+          <span>显示隐藏的文件和文件夹</span>
         </label>
 
         <label class="field row">

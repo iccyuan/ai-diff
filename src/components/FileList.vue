@@ -351,7 +351,21 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
       <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
     </div>
     <div v-if="!repo.workspaces.length" class="list-empty">打开或拖入一个 git 仓库开始 review</div>
-    <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
+    <!-- only animate section slides during an actual drag-reorder; otherwise the
+         FLIP move fires on expand/collapse too and the sliding tree overlaps the
+         project above it -->
+    <TransitionGroup
+      v-else
+      tag="div"
+      class="proj-list"
+      :move-class="drag?.moved ? 'proj-move' : 'proj-move-off'"
+    >
+    <section
+      v-for="(w, i) in repo.workspaces"
+      :key="w.repo.root"
+      class="proj-section"
+      :class="{ active: i === repo.active }"
+    >
       <div
         class="proj-header"
         :class="{ active: i === repo.active, dragging: drag?.moved && drag.index === i }"
@@ -422,7 +436,8 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         </template>
         </ul>
       </template>
-    </template>
+    </section>
+    </TransitionGroup>
 
     <div v-if="selectedChanged.length >= 2" class="sel-bar">
       <span>已选 {{ selectedChanged.length }} 项</span>
