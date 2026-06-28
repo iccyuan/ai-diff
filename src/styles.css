@@ -44,6 +44,10 @@
 /* all glass tints derive from one opacity knob; the Settings slider sets --glass-op */
 :root {
   --glass-op: 0.54;
+  /* extra-translucent tint for popups floating over opaque panels (e.g. the
+     recent-projects dropdown) — lower opacity lets the acrylic desktop show
+     through more, since CSS backdrop-filter can't blur app content here */
+  --glass-thin: rgba(var(--glass-rgb), calc(var(--glass-op) - 0.08));
   --glass: rgba(var(--glass-rgb), var(--glass-op));
   --glass-menu: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.06));
   --glass-strong: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.18));
@@ -53,6 +57,7 @@
 /* glass effect toggle (Settings): fall back to solid surfaces + no blur when off */
 :root[data-glass="off"] {
   --glass: var(--bg);
+  --glass-thin: var(--bg-panel);
   --glass-strong: var(--bg-panel);
   --glass-menu: var(--bg-panel);
   --glass-editor: var(--bg);
@@ -204,17 +209,40 @@ body {
   position: relative;
 }
 
+/* the toolbar trigger that opens the recent-projects dropdown */
+.recent-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recent-trigger-icon {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.recent-caret {
+  display: block;
+  opacity: 0.55;
+  transition: transform 0.16s ease;
+}
+
+.recent-caret.open {
+  transform: rotate(180deg);
+}
+
 .recent-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  /* teleported to <body> and anchored to the trigger via inline left/top, so
+     its backdrop-filter blurs the real app behind it (not the glass toolbar) */
+  position: fixed;
   z-index: 300;
   min-width: 280px;
   max-width: 480px;
   max-height: 60vh;
   overflow-y: auto;
   padding: 5px;
-  background: var(--glass-strong);
+  background: var(--glass-thin);
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   border: 1px solid var(--border);
@@ -568,8 +596,9 @@ input[type="checkbox"] {
   list-style: none;
   margin: 0;
   padding: 4px 0;
-  overflow-y: auto;
-  flex: 1;
+  /* no own scroll: .proj-list is the single scroller so the sidebar scrolls as
+     one (an overflow here would stack a second scrollbar inside each project) */
+  flex: none;
 }
 
 .file-list li {
