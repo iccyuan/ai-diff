@@ -434,32 +434,6 @@ input[type="checkbox"] {
   overflow: hidden;
 }
 
-/* scroll container for all project sections; lets the sidebar scroll as one */
-.proj-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.proj-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-/* FLIP: other sections slide into place while a project is dragged to reorder */
-.proj-move {
-  transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1);
-}
-
-/* outside of a drag, snap sections to place instantly — animating the FLIP on
-   expand/collapse makes the moving tree overlap the project above it */
-.proj-move-off {
-  transition: none;
-}
-
 /* project sections in the sidebar: header click activates the workspace */
 .proj-header {
   flex: none;
@@ -596,9 +570,8 @@ input[type="checkbox"] {
   list-style: none;
   margin: 0;
   padding: 4px 0;
-  /* no own scroll: .proj-list is the single scroller so the sidebar scrolls as
-     one (an overflow here would stack a second scrollbar inside each project) */
-  flex: none;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .file-list li {

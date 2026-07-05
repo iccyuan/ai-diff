@@ -39,10 +39,16 @@ interface FileRow {
 }
 type Row = DirRow | FileRow;
 
+// per-project dir expand state, keyed by workspace root — otherwise two repos
+// sharing a subdir name (e.g. "src") would bleed each other's expand state
 // changes view: everything expanded unless user collapsed it
-const collapsedChanges = ref(new Set<string>());
+const collapsedChangesByRoot = ref(new Map<string, Set<string>>());
 // all-files view: everything collapsed unless user expanded it
-const expandedAll = ref(new Set<string>());
+const expandedAllByRoot = ref(new Map<string, Set<string>>());
+
+function dirSetFor(map: Map<string, Set<string>>, root: string): Set<string> {
+  return map.get(root) ?? new Set();
+}
 
 interface Node {
   dirs: Map<string, Node>;
@@ -94,25 +100,31 @@ function buildRows(
 }
 
 const rows = computed<Row[]>(() => {
+  const root = repo.repo?.root ?? "";
   if (repo.mode === "changes") {
+    const collapsed = dirSetFor(collapsedChangesByRoot.value, root);
     return buildRows(
       repo.files.map((f) => ({ path: f.path, status: f })),
-      (p) => !collapsedChanges.value.has(p),
+      (p) => !collapsed.has(p),
     );
   }
+  const expanded = dirSetFor(expandedAllByRoot.value, root);
   const statusMap = new Map(repo.files.map((f) => [f.path, f]));
   return buildRows(
     repo.allFiles.map((p) => ({ path: p, status: statusMap.get(p) })),
-    (p) => expandedAll.value.has(p),
+    (p) => expanded.has(p),
   );
 });
 
 function toggleDir(path: string) {
-  const set = repo.mode === "changes" ? collapsedChanges : expandedAll;
-  const s = new Set(set.value);
+  const root = repo.repo?.root ?? "";
+  const map = repo.mode === "changes" ? collapsedChangesByRoot : expandedAllByRoot;
+  const s = new Set(dirSetFor(map.value, root));
   if (s.has(path)) s.delete(path);
   else s.add(path);
-  set.value = s;
+  const next = new Map(map.value);
+  next.set(root, s);
+  map.value = next;
 }
 
 function openRow(row: FileRow) {
@@ -351,21 +363,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
       <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
     </div>
     <div v-if="!repo.workspaces.length" class="list-empty">打开或拖入一个 git 仓库开始 review</div>
-    <!-- only animate section slides during an actual drag-reorder; otherwise the
-         FLIP move fires on expand/collapse too and the sliding tree overlaps the
-         project above it -->
-    <TransitionGroup
-      v-else
-      tag="div"
-      class="proj-list"
-      :move-class="drag?.moved ? 'proj-move' : 'proj-move-off'"
-    >
-    <section
-      v-for="(w, i) in repo.workspaces"
-      :key="w.repo.root"
-      class="proj-section"
-      :class="{ active: i === repo.active }"
-    >
+    <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
       <div
         class="proj-header"
         :class="{ active: i === repo.active, dragging: drag?.moved && drag.index === i }"
@@ -436,8 +434,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         </template>
         </ul>
       </template>
-    </section>
-    </TransitionGroup>
+    </template>
 
     <div v-if="selectedChanged.length >= 2" class="sel-bar">
       <span>已选 {{ selectedChanged.length }} 项</span>
