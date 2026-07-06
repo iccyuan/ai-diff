@@ -1,12 +1,37 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type ChangeKind = "modified" | "added" | "deleted" | "renamed" | "untracked";
+export type ChangeKind = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+
+export type RepoOperation = "none" | "merge" | "cherryPick" | "revert";
+
+export type ConflictSide =
+  | "bothModified"
+  | "addedByUs"
+  | "addedByThem"
+  | "deletedByUs"
+  | "deletedByThem"
+  | "bothAdded"
+  | "bothDeleted";
 
 export interface RepoInfo {
   root: string;
   branch: string | null;
   hasHead: boolean;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  operation: RepoOperation;
 }
+
+export interface ConflictSides {
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  isBinary: boolean;
+  tooLarge: boolean;
+}
+
+export type ConflictTake = "ours" | "theirs";
 
 export interface FileStatus {
   path: string;
@@ -14,7 +39,27 @@ export interface FileStatus {
   kind: ChangeKind;
   additions: number | null;
   deletions: number | null;
+  conflict: ConflictSide | null;
+  /** index-vs-HEAD (true) or worktree-vs-index (false); a partially-staged
+   * file legitimately appears twice, once with each value */
+  staged: boolean;
 }
+
+export interface BranchInfo {
+  name: string;
+  isCurrent: boolean;
+  isRemote: boolean;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+}
+
+export interface RemoteInfo {
+  name: string;
+  url: string;
+}
+
+export type ForceMode = "none" | "lease" | "force";
 
 export interface CommitInfo {
   hash: string;
@@ -25,7 +70,12 @@ export interface CommitInfo {
   subject: string;
   additions: number;
   deletions: number;
+  /** >1 means a merge commit — cherry-pick/revert are disabled for these */
+  parents: string[];
 }
+
+export type OpOutcome = "applied" | "conflict";
+export type ResetMode = "soft" | "mixed" | "hard";
 
 export interface Hunk {
   index: number;
@@ -77,12 +127,60 @@ export const api = {
   openRepo: (path: string) => invoke<RepoInfo>("open_repo", { path }),
   getStatus: (repo: string) => invoke<FileStatus[]>("get_status", { repo }),
   getFileDiff: (repo: string, f: FileStatus) =>
-    invoke<FileDiff>("get_file_diff", { repo, path: f.path, oldPath: f.oldPath, kind: f.kind }),
+    invoke<FileDiff>("get_file_diff", {
+      repo,
+      path: f.path,
+      oldPath: f.oldPath,
+      kind: f.kind,
+      staged: f.staged,
+    }),
   revertFile: (repo: string, f: FileStatus) =>
     invoke<void>("revert_file", { repo, path: f.path, oldPath: f.oldPath, kind: f.kind }),
   revertHunk: (repo: string, path: string, patch: string) =>
     invoke<void>("revert_hunk", { repo, path, patch }),
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
+  stageFile: (repo: string, f: FileStatus) =>
+    invoke<void>("stage_file", { repo, path: f.path, oldPath: f.oldPath }),
+  unstageFile: (repo: string, f: FileStatus) =>
+    invoke<void>("unstage_file", { repo, path: f.path, oldPath: f.oldPath, kind: f.kind }),
+  stageAll: (repo: string) => invoke<void>("stage_all", { repo }),
+  unstageAll: (repo: string) => invoke<void>("unstage_all", { repo }),
+  stageHunk: (repo: string, path: string, patch: string) =>
+    invoke<void>("stage_hunk", { repo, path, patch }),
+  unstageHunk: (repo: string, path: string, patch: string) =>
+    invoke<void>("unstage_hunk", { repo, path, patch }),
+  createCommit: (repo: string, message: string, amend: boolean) =>
+    invoke<void>("create_commit", { repo, message, amend }),
+  listBranches: (repo: string) => invoke<BranchInfo[]>("list_branches", { repo }),
+  createBranch: (repo: string, name: string, startPoint: string | null, checkout: boolean) =>
+    invoke<void>("create_branch", { repo, name, startPoint, checkout }),
+  checkoutBranch: (repo: string, name: string, isRemote: boolean) =>
+    invoke<void>("checkout_branch", { repo, name, isRemote }),
+  deleteBranch: (repo: string, name: string, force: boolean) =>
+    invoke<void>("delete_branch", { repo, name, force }),
+  renameBranch: (repo: string, oldName: string, newName: string) =>
+    invoke<void>("rename_branch", { repo, old: oldName, new: newName }),
+  listRemotes: (repo: string) => invoke<RemoteInfo[]>("list_remotes", { repo }),
+  fetchRemote: (repo: string, remote: string | null, prune: boolean) =>
+    invoke<void>("fetch_remote", { repo, remote, prune }),
+  pullBranch: (repo: string, remote: string | null) => invoke<void>("pull_branch", { repo, remote }),
+  pushBranch: (repo: string, remote: string, branch: string, setUpstream: boolean, force: ForceMode) =>
+    invoke<void>("push_branch", { repo, remote, branch, setUpstream, force }),
+  cherryPickCommit: (repo: string, hash: string) => invoke<OpOutcome>("cherry_pick_commit", { repo, hash }),
+  revertCommit: (repo: string, hash: string) => invoke<OpOutcome>("revert_commit", { repo, hash }),
+  resetTo: (repo: string, hash: string, mode: ResetMode) => invoke<void>("reset_to", { repo, hash, mode }),
+  countCommitsBetween: (repo: string, from: string, to: string) =>
+    invoke<number>("count_commits_between", { repo, from, to }),
+  mergeBranch: (repo: string, source: string, noFf: boolean) =>
+    invoke<OpOutcome>("merge_branch", { repo, source, noFf }),
+  getConflictSides: (repo: string, path: string) => invoke<ConflictSides>("get_conflict_sides", { repo, path }),
+  resolveConflict: (repo: string, path: string, content: string) =>
+    invoke<void>("resolve_conflict", { repo, path, content }),
+  resolveConflictBinary: (repo: string, path: string, take: ConflictTake) =>
+    invoke<void>("resolve_conflict_binary", { repo, path, take }),
+  resolveConflictDelete: (repo: string, path: string) => invoke<void>("resolve_conflict_delete", { repo, path }),
+  continueOperation: (repo: string) => invoke<OpOutcome>("continue_operation", { repo }),
+  abortOperation: (repo: string) => invoke<void>("abort_operation", { repo }),
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
   unwatchRepo: (repo: string) => invoke<void>("unwatch_repo", { repo }),
   listFiles: (repo: string, showIgnored: boolean) =>

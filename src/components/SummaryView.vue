@@ -12,8 +12,9 @@ const KIND_LABEL: Record<ChangeKind, string> = {
   deleted: "删除",
   renamed: "重命名",
   untracked: "未跟踪",
+  conflicted: "冲突",
 };
-const KIND_ORDER: ChangeKind[] = ["modified", "added", "deleted", "renamed", "untracked"];
+const KIND_ORDER: ChangeKind[] = ["conflicted", "modified", "added", "deleted", "renamed", "untracked"];
 
 const totals = computed(() => {
   let add = 0;

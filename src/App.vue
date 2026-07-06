@@ -17,6 +17,7 @@ import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
 import SearchPanel from "./components/SearchPanel.vue";
 import SymbolChooser from "./components/SymbolChooser.vue";
+import ConflictResolver from "./components/ConflictResolver.vue";
 import { openQuickOpen, openFindDialog } from "./lib/palette";
 import { checkForUpdate } from "./lib/update";
 import { useRepoStore } from "./stores/repo";
@@ -139,8 +140,11 @@ onMounted(async () => {
       <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
       <div class="center-col">
         <ViewTabs />
-        <SummaryView v-if="repo.ws && !repo.activeTabId" />
-        <DiffView v-show="!(repo.ws && !repo.activeTabId)" />
+        <ConflictResolver v-if="repo.repo && repo.repo.operation !== 'none'" />
+        <template v-else>
+          <SummaryView v-if="repo.ws && !repo.activeTabId" />
+          <DiffView v-show="!(repo.ws && !repo.activeTabId)" />
+        </template>
       </div>
       <HistoryPanel v-if="repo.historyOpen && repo.repo" />
     </div>

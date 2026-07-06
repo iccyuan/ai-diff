@@ -27,7 +27,13 @@ fn relevant(root: &Path, p: &Path) -> bool {
         Some(c) if c.as_os_str() == ".git" => {
             let rest: PathBuf = comps.collect();
             let s = rest.to_string_lossy().replace('\\', "/");
-            s == "index" || s == "HEAD" || s.starts_with("refs/")
+            s == "index"
+                || s == "HEAD"
+                || s == "MERGE_HEAD"
+                || s == "CHERRY_PICK_HEAD"
+                || s == "REVERT_HEAD"
+                || s == "MERGE_MSG"
+                || s.starts_with("refs/")
         }
         Some(_) => true,
         None => false,

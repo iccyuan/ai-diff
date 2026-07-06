@@ -8,6 +8,8 @@ import { showFileInfo } from "../lib/fileInfo";
 import { toast } from "../lib/toast";
 import { fileIcon } from "../lib/fileIcons";
 import Spinner from "./Spinner.vue";
+import CommitPanel from "./CommitPanel.vue";
+import BranchSwitcher from "./BranchSwitcher.vue";
 import { api, type ChangeKind, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
@@ -21,6 +23,7 @@ const BADGE: Record<string, string> = {
   deleted: "D",
   renamed: "R",
   untracked: "U",
+  conflicted: "!",
 };
 
 interface DirRow {
@@ -99,12 +102,16 @@ function buildRows(
   return out;
 }
 
+// changes mode splits into staged/unstaged IDEA-style groups; `rows` is always
+// the unstaged (or, in all-files mode, the plain full-tree) list, `stagedRows`
+// is only ever populated in changes mode.
 const rows = computed<Row[]>(() => {
   const root = repo.repo?.root ?? "";
   if (repo.mode === "changes") {
     const collapsed = dirSetFor(collapsedChangesByRoot.value, root);
+    const unstaged = repo.files.filter((f) => !f.staged);
     return buildRows(
-      repo.files.map((f) => ({ path: f.path, status: f })),
+      unstaged.map((f) => ({ path: f.path, status: f })),
       (p) => !collapsed.has(p),
     );
   }
@@ -115,6 +122,55 @@ const rows = computed<Row[]>(() => {
     (p) => expanded.has(p),
   );
 });
+
+const hasStaged = computed(() => repo.mode === "changes" && repo.files.some((f) => f.staged));
+
+const stagedRows = computed<Row[]>(() => {
+  if (repo.mode !== "changes") return [];
+  const root = repo.repo?.root ?? "";
+  const collapsed = dirSetFor(collapsedChangesByRoot.value, root);
+  const staged = repo.files.filter((f) => f.staged);
+  return buildRows(
+    staged.map((f) => ({ path: f.path, status: f })),
+    (p) => !collapsed.has(p),
+  );
+});
+
+// staged rows first, then unstaged — matches on-screen top-to-bottom order,
+// used for cross-group keyboard nav (move) and shift-click range select
+const allRows = computed<Row[]>(() => [...stagedRows.value, ...rows.value]);
+
+function toggleStage(f: FileStatus) {
+  if (f.staged) repo.unstageFile(f);
+  else repo.stageFile(f);
+}
+
+// fetch/pull/push act on the active workspace's store actions, so switch to
+// the clicked project first (mirrors BranchSwitcher's activate-then-act)
+async function fetchProject(i: number) {
+  if (repo.active !== i) repo.activateWorkspace(i);
+  await repo.fetchRemote();
+}
+async function pullProject(i: number) {
+  if (repo.active !== i) repo.activateWorkspace(i);
+  await repo.pullBranch();
+}
+async function pushProject(i: number) {
+  if (repo.active !== i) repo.activateWorkspace(i);
+  const branch = repo.repo?.branch;
+  if (!branch) return;
+  const ok = await repo.pushBranch("origin", branch, !repo.repo?.upstream, "none");
+  if (!ok) {
+    const retry = await confirmDialog(
+      "强制推送",
+      `推送被拒绝（远程可能有本地没有的新提交）。要先 fetch 最新状态，再用 --force-with-lease 强制推送到 origin/${branch} 吗？这会覆盖远程分支的历史，可能导致他人的提交丢失，且不可撤销。`,
+    );
+    if (retry) {
+      await repo.fetchRemote();
+      await repo.pushBranch("origin", branch, false, "lease");
+    }
+  }
+}
 
 function toggleDir(path: string) {
   const root = repo.repo?.root ?? "";
@@ -137,7 +193,7 @@ const selected = ref<Set<string>>(new Set());
 let anchor: string | null = null;
 
 function fileOrder(): string[] {
-  return rows.value.filter((r): r is FileRow => r.type === "file").map((r) => r.path);
+  return allRows.value.filter((r): r is FileRow => r.type === "file").map((r) => r.path);
 }
 
 function onRowClick(row: FileRow, e: MouseEvent) {
@@ -279,7 +335,7 @@ onBeforeUnmount(() => {
 });
 
 function move(delta: number) {
-  const fileRows = rows.value.filter((r): r is FileRow => r.type === "file");
+  const fileRows = allRows.value.filter((r): r is FileRow => r.type === "file");
   if (!fileRows.length) return;
   const idx = fileRows.findIndex((r) => r.path === repo.selectedPath);
   const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), fileRows.length - 1);
@@ -375,19 +431,101 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
         </svg>
         <span class="proj-name">{{ projName(w.repo.root) }}</span>
-        <span v-if="w.repo.branch" class="branch">⎇ {{ w.repo.branch }}</span>
+        <BranchSwitcher v-if="w.repo.branch" :workspace="w" :index="i" />
         <span v-else-if="!w.repo.hasHead" class="branch warn">空仓库</span>
-        <Spinner v-if="i === repo.active && repo.loadingStatus" :size="12" />
+        <span v-if="w.repo.ahead || w.repo.behind" class="ahead-behind">
+          <template v-if="w.repo.ahead">↑{{ w.repo.ahead }}</template>
+          <template v-if="w.repo.behind">↓{{ w.repo.behind }}</template>
+        </span>
+        <Spinner v-if="(i === repo.active && repo.loadingStatus) || w.busyOp" :size="12" />
         <span v-if="repo.mode === 'changes' && w.files.length" class="stats proj-stats">
           <span class="add">+{{ wsTotals(w.files).add }}</span>
           <span class="del">−{{ wsTotals(w.files).del }}</span>
         </span>
+        <button
+          v-if="w.repo.upstream"
+          class="proj-net-btn"
+          title="Fetch"
+          :disabled="!!w.busyOp"
+          @click.stop="fetchProject(i)"
+        >⇣</button>
+        <button
+          v-if="w.repo.upstream"
+          class="proj-net-btn"
+          title="Pull"
+          :disabled="!!w.busyOp"
+          @click.stop="pullProject(i)"
+        >↓</button>
+        <button
+          v-if="w.repo.branch"
+          class="proj-net-btn"
+          title="Push"
+          :disabled="!!w.busyOp"
+          @click.stop="pushProject(i)"
+        >↑</button>
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
       <template v-if="isExpanded(i, w.repo.root)">
         <div v-if="repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
           工作区干净，没有未提交的更改
         </div>
+
+        <template v-if="hasStaged">
+          <div class="section-head">
+            <span>已暂存的更改</span>
+            <button class="section-action" title="全部取消暂存" @click.stop="repo.unstageAll()">取消暂存全部</button>
+          </div>
+          <ul>
+      <template v-for="row in stagedRows" :key="row.type === 'dir' ? 'd:' + row.path : 's:' + row.path">
+        <li
+          v-if="row.type === 'dir'"
+          class="dir-row"
+          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
+          @click="toggleDir(row.path)"
+        >
+          <svg class="chevron" :class="{ open: !row.collapsed }" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
+          </svg>
+          <span class="dir-name">{{ row.label }}</span>
+        </li>
+        <li
+          v-else
+          :class="[
+            row.status ? 'k-' + row.status.kind : '',
+            { active: row.path === repo.selectedPath && repo.activeTabStaged, selected: selected.has(row.path) },
+          ]"
+          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
+          @click="onRowClick(row, $event)"
+          @contextmenu.prevent.stop="openFileMenu(row, $event)"
+        >
+          <input
+            v-if="row.status && row.status.kind !== 'conflicted'"
+            type="checkbox"
+            class="stage-check"
+            checked
+            title="取消暂存"
+            @click.stop="toggleStage(row.status)"
+          />
+          <span class="ficon">
+            <img :src="fileIcon(row.path)" alt="" />
+            <span v-if="row.status" class="status-dot" :class="row.status.kind">{{
+              badgeOf(row.status.kind)
+            }}</span>
+          </span>
+          <span class="path" :title="fileTitle(row)">{{ row.name }}</span>
+          <span v-if="row.status" class="stats">
+            <span v-if="row.status.additions != null" class="add">+{{ row.status.additions }}</span>
+            <span v-if="row.status.deletions != null" class="del">−{{ row.status.deletions }}</span>
+          </span>
+        </li>
+        </template>
+          </ul>
+          <div class="section-head">
+            <span>未暂存的更改</span>
+            <button class="section-action" title="全部暂存" @click.stop="repo.stageAll()">暂存全部</button>
+          </div>
+        </template>
+
         <ul>
       <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.path">
         <li
@@ -405,12 +543,19 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           v-else
           :class="[
             row.status ? 'k-' + row.status.kind : '',
-            { active: row.path === repo.selectedPath, selected: selected.has(row.path) },
+            { active: row.path === repo.selectedPath && !repo.activeTabStaged, selected: selected.has(row.path) },
           ]"
           :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
           @click="onRowClick(row, $event)"
           @contextmenu.prevent.stop="openFileMenu(row, $event)"
         >
+          <input
+            v-if="row.status && repo.mode === 'changes' && row.status.kind !== 'conflicted'"
+            type="checkbox"
+            class="stage-check"
+            title="暂存"
+            @click.stop="toggleStage(row.status)"
+          />
           <span class="ficon">
             <img :src="fileIcon(row.path)" alt="" />
             <span v-if="row.status" class="status-dot" :class="row.status.kind">{{
@@ -441,6 +586,8 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
       <button class="btn danger" @click="revertSelected">还原所选</button>
       <button class="btn" @click="clearSelection">取消</button>
     </div>
+
+    <CommitPanel />
 
     <Teleport to="body">
       <div

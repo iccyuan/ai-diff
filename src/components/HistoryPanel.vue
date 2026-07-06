@@ -2,12 +2,78 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { fileIcon } from "../lib/fileIcons";
+import { confirmDialog } from "../lib/confirm";
+import { api } from "../lib/api";
+import { toast } from "../lib/toast";
 import Avatar from "./Avatar.vue";
 import Spinner from "./Spinner.vue";
-import type { CommitInfo, FileStatus } from "../lib/api";
+import type { CommitInfo, FileStatus, ResetMode } from "../lib/api";
 
 const repo = useRepoStore();
 const scroller = ref<HTMLElement | null>(null);
+
+// right-click menu: cherry-pick / revert / reset current branch to here.
+// disabled for merge commits (>1 parent) — no -m mainline picker offered.
+const menu = ref<{ x: number; y: number; commit: CommitInfo } | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+
+function openCommitMenu(e: MouseEvent, c: CommitInfo) {
+  menu.value = { x: e.clientX, y: e.clientY, commit: c };
+}
+function closeMenu() {
+  menu.value = null;
+}
+function onDocPointer(e: MouseEvent) {
+  if (!menuEl.value?.contains(e.target as Node)) closeMenu();
+}
+
+async function onCherryPick() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (c) await repo.cherryPickCommit(c.hash);
+}
+
+async function onRevertCommit() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c) return;
+  const ok = await confirmDialog("回滚提交", `确定要回滚提交「${c.subject}」吗？这会创建一个新的提交来撤销它引入的更改。`);
+  if (ok) await repo.revertCommit(c.hash);
+}
+
+async function onResetTo(mode: ResetMode) {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c || !repo.repo) return;
+  if (mode === "hard") {
+    let count: number | null = null;
+    try {
+      count = await api.countCommitsBetween(repo.repo.root, c.hash, "HEAD");
+    } catch (e) {
+      toast(String(e), "error");
+      return;
+    }
+    const ok = await confirmDialog(
+      "重置分支（硬重置）",
+      `确定要将当前分支重置到「${c.subject}」吗？这将丢弃之后 ${count} 个提交，且工作区、暂存区中所有未提交的改动都会被清除。此操作不可撤销。`,
+    );
+    if (!ok) return;
+  } else {
+    const detail =
+      mode === "soft"
+        ? "分支指针会移动到这里，但索引和工作区保持不变——之后的改动会变为「已暂存」。"
+        : "分支指针会移动到这里，工作区文件保持不变，但索引会重置——之后的改动会变为「未暂存」。";
+    const ok = await confirmDialog(
+      `重置分支（${mode === "soft" ? "soft" : "mixed"}）`,
+      `确定要将当前分支重置到「${c.subject}」吗？${detail}`,
+    );
+    if (!ok) return;
+  }
+  await repo.resetTo(c.hash, mode);
+}
+
+onMounted(() => window.addEventListener("click", onDocPointer));
+onBeforeUnmount(() => window.removeEventListener("click", onDocPointer));
 
 const BADGE: Record<string, string> = {
   modified: "M",
@@ -73,7 +139,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
     </div>
     <div ref="scroller" class="commits" @scroll.passive="onScroll">
       <div v-for="c in repo.commits" :key="c.hash" class="commit">
-        <div class="commit-row" @click="repo.toggleCommit(c.hash)">
+        <div class="commit-row" @click="repo.toggleCommit(c.hash)" @contextmenu.prevent.stop="openCommitMenu($event, c)">
           <svg
             class="chevron"
             :class="{ open: repo.expandedCommits.includes(c.hash) }"
@@ -124,5 +190,22 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
       <div v-else-if="repo.commitsExhausted && repo.commits.length" class="list-tail muted">已到最早提交</div>
       <div v-else-if="!repo.commits.length" class="list-tail muted">暂无提交历史</div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="menu"
+        ref="menuEl"
+        class="ctx-menu"
+        :style="{ left: menu.x + 'px', top: menu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button :disabled="menu.commit.parents.length > 1" @click="onCherryPick">Cherry-pick</button>
+        <button :disabled="menu.commit.parents.length > 1" @click="onRevertCommit">Revert Commit</button>
+        <button @click="onResetTo('soft')">重置当前分支到这里（soft）</button>
+        <button @click="onResetTo('mixed')">重置当前分支到这里（mixed）</button>
+        <button @click="onResetTo('hard')">重置当前分支到这里（hard）</button>
+      </div>
+    </Teleport>
   </aside>
 </template>

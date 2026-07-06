@@ -2,14 +2,17 @@ import { acceptHMRUpdate, defineStore } from "pinia";
 import { listen } from "@tauri-apps/api/event";
 import {
   api,
+  type BranchInfo,
   type CommitInfo,
   type FileContent,
   type FileDiff,
   type FileStatus,
+  type ForceMode,
   type Hunk,
   type RepoInfo,
+  type ResetMode,
 } from "../lib/api";
-import { toast } from "../lib/toast";
+import { toast, updateToast } from "../lib/toast";
 import { useSettingsStore } from "./settings";
 
 let watcherHooked = false;
@@ -24,6 +27,9 @@ export interface ViewTab {
   commit: string | null;
   /** status snapshot needed by get_commit_file_diff */
   file: FileStatus | null;
+  /** which side of a partially-staged file this working-tree tab shows;
+   * absent/false for the common (not-partially-staged) case */
+  staged?: boolean;
 }
 
 /** everything one open project needs; the window can hold several of these */
@@ -48,6 +54,9 @@ export interface Workspace {
   tabs: ViewTab[];
   activeTabId: string | null;
   pendingRevealLine: number | null;
+  branches: BranchInfo[];
+  /** per-workspace so a long-running network op on one project doesn't lock the others */
+  busyOp: "fetch" | "pull" | "push" | null;
 }
 
 function blankWorkspace(info: RepoInfo): Workspace {
@@ -72,6 +81,8 @@ function blankWorkspace(info: RepoInfo): Workspace {
     tabs: [],
     activeTabId: null,
     pendingRevealLine: null,
+    branches: [],
+    busyOp: null,
   };
 }
 
@@ -155,7 +166,15 @@ export const useRepoStore = defineStore("repo", {
     },
     selected(): FileStatus | null {
       const w = this.ws;
-      return w?.files.find((f) => f.path === w.selectedPath) ?? null;
+      if (!w) return null;
+      const activeTab = w.tabs.find((t) => t.id === w.activeTabId);
+      const staged = !!activeTab?.staged;
+      return w.files.find((f) => f.path === w.selectedPath && !!f.staged === staged) ?? null;
+    },
+    /** whether the currently-open working-tree diff is the staged (vs unstaged) side */
+    activeTabStaged(): boolean {
+      const w = this.ws;
+      return !!w?.tabs.find((t) => t.id === w.activeTabId)?.staged;
     },
   },
   actions: {
@@ -224,6 +243,7 @@ export const useRepoStore = defineStore("repo", {
         // re-read repo info so a branch switch (or HEAD change) reflects live
         w.repo = await api.openRepo(w.repo.root);
         w.files = await api.getStatus(w.repo.root);
+        w.branches = await api.listBranches(w.repo.root);
         if (this.viewMode === "all") {
           w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
         }
@@ -284,16 +304,19 @@ export const useRepoStore = defineStore("repo", {
       if (this.ws) this.ws.pendingRevealLine = null;
     },
     async selectFile(f: FileStatus) {
-      await this.selectPath(f.path);
+      await this.selectPath(f.path, f.staged);
     },
-    /** open (or focus) a working-tree tab: 更改 shows a diff for changed files, 全部文件 shows content */
-    async selectPath(path: string) {
+    /** open (or focus) a working-tree tab: 更改 shows a diff for changed files, 全部文件 shows content.
+     * `staged` distinguishes the two tabs a partially-staged file can have;
+     * the plain `wt:${path}` id is left untouched for every other caller. */
+    async selectPath(path: string, staged = false) {
       await this.openTab({
-        id: `wt:${path}`,
+        id: staged ? `wt:staged:${path}` : `wt:${path}`,
         title: basename(path),
         path,
         commit: null,
         file: null,
+        staged,
       });
     },
     async selectCommitFile(hash: string, f: FileStatus) {
@@ -342,8 +365,9 @@ export const useRepoStore = defineStore("repo", {
         }
         return;
       }
-      // 更改 view shows a diff for changed files; 全部文件 always shows content
-      const st = w.files.find((f) => f.path === tab.path);
+      // 更改 view shows a diff for changed files; 全部文件 always shows content.
+      // match `staged` too — a partially-staged file has two distinct entries.
+      const st = w.files.find((f) => f.path === tab.path && !!f.staged === !!tab.staged);
       if (st && this.viewMode === "changes") {
         await this.loadDiff(w, st);
       } else {
@@ -479,6 +503,258 @@ export const useRepoStore = defineStore("repo", {
       try {
         await api.revertAll(w.repo.root);
         toast("已还原全部更改");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** ----- staging + commit ----- */
+    async stageFile(f: FileStatus) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.stageFile(w.repo.root, f);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async unstageFile(f: FileStatus) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.unstageFile(w.repo.root, f);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async stageAll() {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.stageAll(w.repo.root);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async unstageAll() {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.unstageAll(w.repo.root);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async stageHunk(hunk: Hunk) {
+      const w = this.ws;
+      if (!w || !w.diff || !w.selectedPath) return;
+      const patch = w.diff.fileHeader + hunk.text;
+      try {
+        await api.stageHunk(w.repo.root, w.selectedPath, patch);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async unstageHunk(hunk: Hunk) {
+      const w = this.ws;
+      if (!w || !w.diff || !w.selectedPath) return;
+      const patch = w.diff.fileHeader + hunk.text;
+      try {
+        await api.unstageHunk(w.repo.root, w.selectedPath, patch);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** returns whether the commit actually went through, so the message box knows to clear */
+    async createCommit(message: string, amend: boolean): Promise<boolean> {
+      const w = this.ws;
+      if (!w) return false;
+      try {
+        await api.createCommit(w.repo.root, message, amend);
+        toast(amend ? "已修补提交" : "已提交");
+      } catch (e) {
+        toast(String(e), "error");
+        return false;
+      } finally {
+        await this.refreshWs(w);
+      }
+      return true;
+    },
+    /** ----- branches ----- */
+    async loadBranches(w: Workspace) {
+      try {
+        w.branches = await api.listBranches(w.repo.root);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+    },
+    async createBranch(name: string, startPoint: string | null, checkout: boolean) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.createBranch(w.repo.root, name, startPoint, checkout);
+        toast(`已创建分支 ${name}`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async checkoutBranch(name: string, isRemote: boolean) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.checkoutBranch(w.repo.root, name, isRemote);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** tries a plain delete first; on "not fully merged" the caller should
+     * confirm and retry with force=true — never force silently */
+    async deleteBranch(name: string, force: boolean) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.deleteBranch(w.repo.root, name, force);
+        toast(`已删除分支 ${name}`);
+      } catch (e) {
+        toast(String(e), "error");
+        throw e; // let the caller decide whether to retry with force
+      } finally {
+        await this.refreshWs(w);
+      }
+    },
+    async renameBranch(oldName: string, newName: string) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.renameBranch(w.repo.root, oldName, newName);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** ----- fetch / pull / push (network — can be slow, so a per-workspace
+     *  busyOp + progress toast rather than blocking the whole UI) ----- */
+    async fetchRemote(remote: string | null = null, prune = false) {
+      const w = this.ws;
+      if (!w) return;
+      w.busyOp = "fetch";
+      const id = toast("正在 fetch…", "progress");
+      try {
+        await api.fetchRemote(w.repo.root, remote, prune);
+        updateToast(id, "fetch 完成", "ok");
+      } catch (e) {
+        updateToast(id, String(e), "error");
+      } finally {
+        w.busyOp = null;
+        await this.refreshWs(w);
+      }
+    },
+    async pullBranch(remote: string | null = null) {
+      const w = this.ws;
+      if (!w) return;
+      w.busyOp = "pull";
+      const id = toast("正在 pull…", "progress");
+      try {
+        await api.pullBranch(w.repo.root, remote);
+        updateToast(id, "pull 完成", "ok");
+      } catch (e) {
+        updateToast(id, String(e), "error");
+      } finally {
+        w.busyOp = null;
+        await this.refreshWs(w);
+      }
+    },
+    /** returns whether the push actually succeeded, so the caller can offer a force retry */
+    async pushBranch(remote: string, branch: string, setUpstream: boolean, force: ForceMode): Promise<boolean> {
+      const w = this.ws;
+      if (!w) return false;
+      w.busyOp = "push";
+      const id = toast("正在 push…", "progress");
+      try {
+        await api.pushBranch(w.repo.root, remote, branch, setUpstream, force);
+        updateToast(id, "push 完成", "ok");
+        return true;
+      } catch (e) {
+        updateToast(id, String(e), "error");
+        return false;
+      } finally {
+        w.busyOp = null;
+        await this.refreshWs(w);
+      }
+    },
+    /** ----- history actions (cherry-pick / revert / reset) -----
+     * a "conflict" outcome isn't an error — refreshWs picks up the resulting
+     * RepoOperation and (from PR6 on) routes the view to the conflict resolver */
+    async cherryPickCommit(hash: string) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        const outcome = await api.cherryPickCommit(w.repo.root, hash);
+        toast(outcome === "applied" ? "已 cherry-pick" : "cherry-pick 产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async revertCommit(hash: string) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        const outcome = await api.revertCommit(w.repo.root, hash);
+        toast(outcome === "applied" ? "已回滚该提交" : "回滚产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async resetTo(hash: string, mode: ResetMode) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.resetTo(w.repo.root, hash, mode);
+        toast("已重置分支");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** ----- merge + conflict resolution ----- */
+    async mergeBranch(source: string, noFf: boolean) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        const outcome = await api.mergeBranch(w.repo.root, source, noFf);
+        toast(outcome === "applied" ? "合并完成" : "合并产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async continueOperation() {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        const outcome = await api.continueOperation(w.repo.root);
+        toast(outcome === "applied" ? "已完成" : "仍有冲突未解决", outcome === "applied" ? "ok" : "error");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async abortOperation() {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.abortOperation(w.repo.root);
+        toast("已中止");
       } catch (e) {
         toast(String(e), "error");
       }

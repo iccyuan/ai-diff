@@ -395,6 +395,22 @@ async function onRevertGlyphClick(line: number) {
   if (ok) await repo.revertHunk(h);
 }
 
+// stage/unstage aren't destructive (no confirm needed) — acts on whichever
+// hunk the diff-nav prev/next arrows are currently parked on
+const canStageHunks = computed(() => {
+  const f = repo.selected;
+  return repo.mode === "changes" && !!f && (f.kind === "modified" || f.kind === "renamed");
+});
+
+async function onStageCurrentHunk() {
+  const d = repo.diff;
+  if (!d || !d.hunks.length) return;
+  const h = d.hunks[navIdx.value >= 0 ? navIdx.value : 0];
+  if (!h) return;
+  if (repo.activeTabStaged) await repo.unstageHunk(h);
+  else await repo.stageHunk(h);
+}
+
 onMounted(() => {
   window.addEventListener("keyup", onGlobalKeyUp);
   editor = monaco.editor.createDiffEditor(container.value!, {
@@ -524,6 +540,14 @@ onBeforeUnmount(() => {
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="M4 6 8 10l4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
+      </button>
+      <button
+        v-if="canStageHunks"
+        class="hunk-stage-btn"
+        :title="repo.activeTabStaged ? '取消暂存当前修改块' : '暂存当前修改块'"
+        @click="onStageCurrentHunk"
+      >
+        {{ repo.activeTabStaged ? "−" : "+" }}
       </button>
     </div>
     <div v-if="isMarkdown" class="md-toggle">
