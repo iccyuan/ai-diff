@@ -132,6 +132,9 @@ pub fn run() {
             git::search_text,
             git::get_image_diff,
             git::file_info,
+            git::create_file,
+            git::create_dir,
+            git::get_console_log,
             watcher::watch_repo,
             watcher::unwatch_repo,
             new_window

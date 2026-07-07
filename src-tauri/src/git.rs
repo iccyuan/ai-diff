@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 /// git's well-known empty tree object; used as the diff base in repos with no commits
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -87,6 +89,9 @@ pub struct CommitInfo {
     /// >1 means a merge commit — cherry-pick/revert need a -m mainline choice
     /// we don't offer, so the UI disables those actions for these
     pub parents: Vec<String>,
+    /// branch/tag names pointing at this commit (from `%D`), cleaned of the
+    /// "HEAD -> " / "tag: " decorations git adds — e.g. ["main", "origin/main"]
+    pub refs: Vec<String>,
 }
 
 #[derive(Serialize, PartialEq, Eq, Debug)]
@@ -137,6 +142,43 @@ impl FileDiff {
     }
 }
 
+/// one recorded git invocation, shown in the Git panel's 控制台 tab
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConsoleEntry {
+    pub root: String,
+    pub args: String,
+    pub ok: bool,
+    pub at_ms: u64,
+}
+
+const CONSOLE_CAP: usize = 500;
+
+fn console_log() -> &'static Mutex<VecDeque<ConsoleEntry>> {
+    static LOG: OnceLock<Mutex<VecDeque<ConsoleEntry>>> = OnceLock::new();
+    LOG.get_or_init(|| Mutex::new(VecDeque::with_capacity(CONSOLE_CAP)))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn record_console(repo: &Path, args: &[&str], ok: bool) {
+    let mut log = console_log().lock().unwrap();
+    if log.len() >= CONSOLE_CAP {
+        log.pop_front();
+    }
+    log.push_back(ConsoleEntry {
+        root: repo.to_string_lossy().into_owned(),
+        args: args.join(" "),
+        ok,
+        at_ms: now_ms(),
+    });
+}
+
 fn git_command(repo: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo);
@@ -179,6 +221,7 @@ fn run_git(repo: &Path, args: &[&str], stdin_data: Option<&[u8]>) -> Result<Vec<
     let out = child
         .wait_with_output()
         .map_err(|e| format!("git 执行失败: {e}"))?;
+    record_console(repo, args, out.status.success());
     if out.status.success() {
         Ok(out.stdout)
     } else {
@@ -782,6 +825,41 @@ pub async fn file_info(repo: String, path: String) -> Result<FileInfo, String> {
     }
 }
 
+/// Creates an empty file at `path` (parent dirs created as needed). Does not
+/// stage it — IDEA-style "new = untracked", the user decides when to add it.
+/// Errors if something already exists there.
+#[tauri::command]
+pub async fn create_file(repo: String, path: String) -> Result<(), String> {
+    let full = PathBuf::from(&repo).join(&path);
+    if full.exists() {
+        return Err(format!("{path} 已存在"));
+    }
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
+    }
+    std::fs::write(&full, b"").map_err(|e| format!("创建文件失败: {e}"))
+}
+
+/// Creates a directory (and any missing parents) at `path`. Errors if
+/// something already exists there.
+#[tauri::command]
+pub async fn create_dir(repo: String, path: String) -> Result<(), String> {
+    let full = PathBuf::from(&repo).join(&path);
+    if full.exists() {
+        return Err(format!("{path} 已存在"));
+    }
+    std::fs::create_dir_all(&full).map_err(|e| format!("创建目录失败: {e}"))
+}
+
+/// Recent git invocations for `repo`, most-recent-last, shown in the Git
+/// panel's 控制台 tab. Backed by an in-process ring buffer (capacity 500
+/// across all repos) — not persisted, resets on app restart.
+#[tauri::command]
+pub async fn get_console_log(repo: String) -> Result<Vec<ConsoleEntry>, String> {
+    let log = console_log().lock().unwrap();
+    Ok(log.iter().filter(|e| e.root == repo).cloned().collect())
+}
+
 /// best-effort line count of an untracked file; None for binary/large
 fn count_lines(full: &Path) -> Option<u32> {
     let meta = std::fs::metadata(full).ok()?;
@@ -907,8 +985,30 @@ fn parent_ref(repo: &Path, hash: &str) -> String {
     }
 }
 
+/// Parses `%D`'s ref-name decoration string (e.g. "HEAD -> main, origin/main,
+/// tag: v1.0") into cleaned individual names (["main", "origin/main", "v1.0"]).
+/// A bare "HEAD" (detached) isn't a real ref, so it's dropped.
+fn parse_decorations(raw: &str) -> Vec<String> {
+    raw.split(", ")
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.is_empty() || part == "HEAD" {
+                return None;
+            }
+            let part = part.strip_prefix("HEAD -> ").unwrap_or(part);
+            let part = part.strip_prefix("tag: ").unwrap_or(part);
+            Some(part.to_string())
+        })
+        .collect()
+}
+
 #[tauri::command]
-pub async fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
+pub async fn log_commits(
+    repo: String,
+    skip: u32,
+    count: u32,
+    branch: Option<String>,
+) -> Result<Vec<CommitInfo>, String> {
     let repo = PathBuf::from(repo);
     if base_ref(&repo) != "HEAD" {
         return Ok(Vec::new()); // empty repo: no history yet
@@ -917,23 +1017,24 @@ pub async fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<Comm
     let count_arg = format!("--max-count={count}");
     // \x01 marks each record start; --shortstat appends a
     // " N files changed, X insertions(+), Y deletions(-)" line per commit
-    let out = run_git_text(
-        &repo,
-        &[
-            "log",
-            &skip_arg,
-            &count_arg,
-            "--shortstat",
-            "--date=format:%Y-%m-%d %H:%M",
-            "--pretty=format:%x01%H%x00%h%x00%an%x00%ae%x00%ad%x00%P%x00%s",
-        ],
-    )?;
+    let mut args: Vec<&str> = vec!["log"];
+    if let Some(b) = &branch {
+        args.push(b); // scope the log to this branch/ref instead of HEAD
+    }
+    args.extend([
+        &skip_arg,
+        &count_arg,
+        "--shortstat",
+        "--date=format:%Y-%m-%d %H:%M",
+        "--pretty=format:%x01%H%x00%h%x00%an%x00%ae%x00%ad%x00%P%x00%s%x00%D",
+    ]);
+    let out = run_git_text(&repo, &args)?;
     let mut commits = Vec::new();
     for block in out.split('\x01').filter(|b| !b.is_empty()) {
         let mut lines = block.lines();
         let Some(head) = lines.next() else { continue };
-        let cols: Vec<&str> = head.splitn(7, '\0').collect();
-        if cols.len() != 7 {
+        let cols: Vec<&str> = head.splitn(8, '\0').collect();
+        if cols.len() != 8 {
             continue;
         }
         let (mut additions, mut deletions) = (0u32, 0u32);
@@ -961,6 +1062,7 @@ pub async fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<Comm
             additions,
             deletions,
             parents,
+            refs: parse_decorations(cols[7]),
         });
     }
     Ok(commits)
@@ -1850,6 +1952,22 @@ mod tests {
     }
 
     #[test]
+    fn decoration_parsing() {
+        assert_eq!(parse_decorations(""), Vec::<String>::new());
+        assert_eq!(parse_decorations("HEAD -> main"), vec!["main"]);
+        assert_eq!(
+            parse_decorations("HEAD -> main, origin/main"),
+            vec!["main", "origin/main"]
+        );
+        assert_eq!(parse_decorations("tag: v1.0"), vec!["v1.0"]);
+        assert_eq!(
+            parse_decorations("HEAD -> main, tag: v1.0, origin/main"),
+            vec!["main", "v1.0", "origin/main"]
+        );
+        assert_eq!(parse_decorations("HEAD"), Vec::<String>::new());
+    }
+
+    #[test]
     fn name_status_rename_and_copy() {
         let out = "R100\0old name.txt\0new name.txt\0C75\0src.txt\0copy.txt\0T\0link\0";
         let files = parse_name_status(out);
@@ -1933,7 +2051,10 @@ mod repo_tests {
         bl(super::read_file(repo, path))
     }
     fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
-        bl(super::log_commits(repo, skip, count))
+        bl(super::log_commits(repo, skip, count, None))
+    }
+    fn log_commits_on(repo: String, skip: u32, count: u32, branch: &str) -> Result<Vec<CommitInfo>, String> {
+        bl(super::log_commits(repo, skip, count, Some(branch.to_string())))
     }
     fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
         bl(super::commit_files(repo, hash))
@@ -2074,6 +2195,15 @@ mod repo_tests {
         max: u32,
     ) -> Result<Vec<SearchHit>, String> {
         bl(super::search_text(repo, query, whole_word, max))
+    }
+    fn create_file(repo: String, path: String) -> Result<(), String> {
+        bl(super::create_file(repo, path))
+    }
+    fn create_dir(repo: String, path: String) -> Result<(), String> {
+        bl(super::create_dir(repo, path))
+    }
+    fn get_console_log(repo: String) -> Result<Vec<ConsoleEntry>, String> {
+        bl(super::get_console_log(repo))
     }
 
     struct TempRepo(PathBuf);
@@ -3125,12 +3255,56 @@ mod repo_tests {
         r.write("b.txt", b"feature\n");
         run_git(r.path(), &["add", "-A"], None).unwrap();
         run_git(r.path(), &["commit", "-qm", "feature commit"], None).unwrap();
-        checkout_branch(r.root(), start, false).unwrap();
+        checkout_branch(r.root(), start.clone(), false).unwrap();
         run_git(r.path(), &["merge", "--no-ff", "-m", "merge feature", "feature"], None).unwrap();
 
         let commits = log_commits(r.root(), 0, 10).unwrap();
         assert_eq!(commits[0].parents.len(), 2, "merge commit must report 2 parents");
         assert_eq!(commits.last().unwrap().parents.len(), 0, "root commit has no parents");
+
+        assert!(
+            commits[0].refs.iter().any(|name| name == &start),
+            "the merge commit (HEAD) should be decorated with the current branch name: {:?}",
+            commits[0].refs
+        );
+        let feature_commit = commits.iter().find(|c| c.subject == "feature commit").unwrap();
+        assert!(
+            feature_commit.refs.iter().any(|name| name == "feature"),
+            "the feature branch's tip commit should be decorated with its branch name: {:?}",
+            feature_commit.refs
+        );
+        assert!(
+            commits.last().unwrap().refs.is_empty(),
+            "the root commit has no ref pointing at it directly"
+        );
+    }
+
+    #[test]
+    fn log_commits_scoped_to_branch() {
+        let r = TempRepo::new("branch-scope");
+        r.write("a.txt", b"base\n");
+        r.commit_all();
+        let start = current_branch(&r);
+        create_branch(r.root(), "feature".into(), None, true).unwrap();
+        r.write("b.txt", b"feature\n");
+        run_git(r.path(), &["add", "-A"], None).unwrap();
+        run_git(r.path(), &["commit", "-qm", "feature commit"], None).unwrap();
+        checkout_branch(r.root(), start.clone(), false).unwrap();
+        r.write("c.txt", b"main only\n");
+        run_git(r.path(), &["add", "-A"], None).unwrap();
+        run_git(r.path(), &["commit", "-qm", "main-only commit"], None).unwrap();
+
+        let feature_log = log_commits_on(r.root(), 0, 10, "feature").unwrap();
+        assert!(feature_log.iter().any(|c| c.subject == "feature commit"));
+        assert!(!feature_log.iter().any(|c| c.subject == "main-only commit"));
+
+        let main_log = log_commits_on(r.root(), 0, 10, &start).unwrap();
+        assert!(main_log.iter().any(|c| c.subject == "main-only commit"));
+        assert!(!main_log.iter().any(|c| c.subject == "feature commit"));
+
+        // no branch filter (None) logs HEAD, which is `start` right now
+        let head_log = log_commits(r.root(), 0, 10).unwrap();
+        assert_eq!(head_log.len(), main_log.len());
     }
 
     #[test]
@@ -3335,5 +3509,58 @@ mod repo_tests {
         assert_eq!(continue_operation(r.root()).unwrap(), OpOutcome::Applied);
         assert_eq!(std::fs::read(r.path().join("bin.dat")).unwrap(), ours_bytes);
         assert_eq!(r.porcelain(), "");
+    }
+
+    #[test]
+    fn create_file_and_dir() {
+        let r = TempRepo::new("create-entries");
+        r.write("seed.txt", b"seed\n");
+        r.commit_all();
+
+        create_file(r.root(), "new.txt".into()).unwrap();
+        assert!(r.path().join("new.txt").exists());
+        assert_eq!(std::fs::read(r.path().join("new.txt")).unwrap(), b"");
+
+        // parent directories are created as needed
+        create_file(r.root(), "nested/dir/file.txt".into()).unwrap();
+        assert!(r.path().join("nested/dir/file.txt").exists());
+
+        create_dir(r.root(), "empty/subdir".into()).unwrap();
+        assert!(r.path().join("empty/subdir").is_dir());
+
+        // creating on top of an existing path is an error, not a silent overwrite
+        assert!(create_file(r.root(), "new.txt".into()).is_err());
+        assert!(create_dir(r.root(), "empty/subdir".into()).is_err());
+
+        // new files are untracked, never auto-staged
+        let files = list_files(r.root(), false).unwrap();
+        assert!(files.contains(&"new.txt".to_string()));
+        assert!(files.contains(&"nested/dir/file.txt".to_string()));
+        let status = get_status(r.root()).unwrap();
+        assert!(status.iter().all(|f| f.kind != ChangeKind::Added || f.path != "new.txt"));
+    }
+
+    #[test]
+    fn console_log_records_git_invocations_per_repo() {
+        let a = TempRepo::new("console-a");
+        let b = TempRepo::new("console-b");
+        a.write("seed.txt", b"seed\n");
+        a.commit_all();
+        b.write("seed.txt", b"seed\n");
+        b.commit_all();
+
+        let log_a = get_console_log(a.root()).unwrap();
+        assert!(!log_a.is_empty(), "commands run against repo a should be recorded");
+        assert!(log_a.iter().all(|e| e.root == a.root()), "must not leak entries from other repos");
+        assert!(log_a.iter().any(|e| e.args.contains("commit")));
+        assert!(log_a.iter().all(|e| e.ok));
+
+        let log_b = get_console_log(b.root()).unwrap();
+        assert!(log_b.iter().all(|e| e.root == b.root()));
+
+        // a failing command is recorded too, with ok=false
+        let _ = checkout_branch(a.root(), "does-not-exist".into(), false);
+        let log_a2 = get_console_log(a.root()).unwrap();
+        assert!(log_a2.iter().any(|e| !e.ok));
     }
 }

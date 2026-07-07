@@ -4,145 +4,131 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
+import { promptDialog } from "../lib/prompt";
 import { showFileInfo } from "../lib/fileInfo";
 import { toast } from "../lib/toast";
 import { fileIcon } from "../lib/fileIcons";
+import { allDirPaths, ancestorDirs, buildRows, STATUS_BADGE, type FileRow, type Row } from "../lib/fileTree";
 import Spinner from "./Spinner.vue";
-import CommitPanel from "./CommitPanel.vue";
 import BranchSwitcher from "./BranchSwitcher.vue";
 import { api, type ChangeKind, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
 const settings = useSettingsStore();
+const rootEl = ref<HTMLElement | null>(null);
 // tighter steps keep deep trees usable in a narrow sidebar
 const INDENT = 12;
 
-const BADGE: Record<string, string> = {
-  modified: "M",
-  added: "A",
-  deleted: "D",
-  renamed: "R",
-  untracked: "U",
-  conflicted: "!",
-};
-
-interface DirRow {
-  type: "dir";
-  path: string;
-  label: string;
-  depth: number;
-  collapsed: boolean;
-}
-interface FileRow {
-  type: "file";
-  path: string;
-  name: string;
-  depth: number;
-  status?: FileStatus;
-}
-type Row = DirRow | FileRow;
-
 // per-project dir expand state, keyed by workspace root — otherwise two repos
-// sharing a subdir name (e.g. "src") would bleed each other's expand state
-// changes view: everything expanded unless user collapsed it
-const collapsedChangesByRoot = ref(new Map<string, Set<string>>());
-// all-files view: everything collapsed unless user expanded it
+// sharing a subdir name (e.g. "src") would bleed each other's expand state.
+// all-files view: everything collapsed unless the user (or "expand all") opened it
 const expandedAllByRoot = ref(new Map<string, Set<string>>());
 
-function dirSetFor(map: Map<string, Set<string>>, root: string): Set<string> {
-  return map.get(root) ?? new Set();
+function dirSetFor(root: string): Set<string> {
+  return expandedAllByRoot.value.get(root) ?? new Set();
+}
+function setDirSetFor(root: string, s: Set<string>) {
+  const next = new Map(expandedAllByRoot.value);
+  next.set(root, s);
+  expandedAllByRoot.value = next;
 }
 
-interface Node {
-  dirs: Map<string, Node>;
-  files: { path: string; status?: FileStatus }[];
+// git never tracks empty directories, so a folder created via "新建文件夹" is
+// invisible to list_files until something lands inside it. Seed it into the
+// tree ourselves in the meantime — dropped once a real tracked/untracked file
+// makes it redundant (this is session-local: a folder emptied out again, or
+// deleted outside the app, won't self-correct until the repo is reopened).
+const pendingEmptyDirs = ref(new Map<string, Set<string>>());
+function pendingDirsFor(root: string): Set<string> {
+  return pendingEmptyDirs.value.get(root) ?? new Set();
+}
+function addPendingEmptyDir(root: string, path: string) {
+  const s = new Set(pendingDirsFor(root));
+  s.add(path);
+  const next = new Map(pendingEmptyDirs.value);
+  next.set(root, s);
+  pendingEmptyDirs.value = next;
 }
 
-function buildRows(
-  entries: { path: string; status?: FileStatus }[],
-  isExpanded: (dirPath: string) => boolean,
-): Row[] {
-  const root: Node = { dirs: new Map(), files: [] };
-  for (const e of entries) {
-    const parts = e.path.split("/");
-    let n = root;
-    for (let i = 0; i < parts.length - 1; i++) {
-      let child = n.dirs.get(parts[i]);
-      if (!child) {
-        child = { dirs: new Map(), files: [] };
-        n.dirs.set(parts[i], child);
-      }
-      n = child;
-    }
-    n.files.push(e);
-  }
-
-  const out: Row[] = [];
-  const walk = (n: Node, prefix: string, depth: number) => {
-    for (const name of [...n.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
-      let label = name;
-      let path = prefix ? `${prefix}/${name}` : name;
-      let child = n.dirs.get(name)!;
-      // compact chains of single-child dirs without files (src/components/ style)
-      while (child.files.length === 0 && child.dirs.size === 1) {
-        const only = [...child.dirs.keys()][0];
-        label += "/" + only;
-        path += "/" + only;
-        child = child.dirs.get(only)!;
-      }
-      const open = isExpanded(path);
-      out.push({ type: "dir", path, label, depth, collapsed: !open });
-      if (open) walk(child, path, depth + 1);
-    }
-    for (const e of [...n.files].sort((a, b) => a.path.localeCompare(b.path))) {
-      out.push({ type: "file", path: e.path, name: e.path.split("/").pop()!, depth, status: e.status });
-    }
-  };
-  walk(root, "", 0);
-  return out;
-}
-
-// changes mode splits into staged/unstaged IDEA-style groups; `rows` is always
-// the unstaged (or, in all-files mode, the plain full-tree) list, `stagedRows`
-// is only ever populated in changes mode.
 const rows = computed<Row[]>(() => {
   const root = repo.repo?.root ?? "";
-  if (repo.mode === "changes") {
-    const collapsed = dirSetFor(collapsedChangesByRoot.value, root);
-    const unstaged = repo.files.filter((f) => !f.staged);
-    return buildRows(
-      unstaged.map((f) => ({ path: f.path, status: f })),
-      (p) => !collapsed.has(p),
-    );
-  }
-  const expanded = dirSetFor(expandedAllByRoot.value, root);
+  const expanded = dirSetFor(root);
   const statusMap = new Map(repo.files.map((f) => [f.path, f]));
+  const knownDirs = allDirPaths(repo.allFiles);
+  const extraDirs = [...pendingDirsFor(root)].filter((d) => !knownDirs.has(d));
   return buildRows(
     repo.allFiles.map((p) => ({ path: p, status: statusMap.get(p) })),
     (p) => expanded.has(p),
+    extraDirs,
   );
 });
 
-const hasStaged = computed(() => repo.mode === "changes" && repo.files.some((f) => f.staged));
-
-const stagedRows = computed<Row[]>(() => {
-  if (repo.mode !== "changes") return [];
+function toggleDir(path: string) {
   const root = repo.repo?.root ?? "";
-  const collapsed = dirSetFor(collapsedChangesByRoot.value, root);
-  const staged = repo.files.filter((f) => f.staged);
-  return buildRows(
-    staged.map((f) => ({ path: f.path, status: f })),
-    (p) => !collapsed.has(p),
-  );
-});
+  const s = new Set(dirSetFor(root));
+  if (s.has(path)) s.delete(path);
+  else s.add(path);
+  setDirSetFor(root, s);
+}
 
-// staged rows first, then unstaged — matches on-screen top-to-bottom order,
-// used for cross-group keyboard nav (move) and shift-click range select
-const allRows = computed<Row[]>(() => [...stagedRows.value, ...rows.value]);
+/* ----- IDEA-style tree toolbar: locate / expand all / collapse all ----- */
+function expandAll() {
+  const root = repo.repo?.root;
+  if (!root) return;
+  setDirSetFor(root, allDirPaths(repo.allFiles));
+}
+function collapseAll() {
+  const root = repo.repo?.root;
+  if (!root) return;
+  setDirSetFor(root, new Set());
+}
+async function locateCurrentFile() {
+  const root = repo.repo?.root;
+  const path = repo.selectedPath;
+  if (!root || !path) return;
+  const s = new Set(dirSetFor(root));
+  for (const d of ancestorDirs(path)) s.add(d);
+  setDirSetFor(root, s);
+  collapsedProjects.value = new Set([...collapsedProjects.value].filter((r) => r !== root));
+  await nextTick();
+  rootEl.value?.querySelector<HTMLElement>(".active")?.scrollIntoView({ block: "center" });
+}
 
-function toggleStage(f: FileStatus) {
-  if (f.staged) repo.unstageFile(f);
-  else repo.stageFile(f);
+/* ----- new file / new folder (right-click on a dir row or the project root) ----- */
+async function newFile(dirPath: string) {
+  closeMenu();
+  const name = await promptDialog("新建文件", dirPath ? `在「${dirPath}」下新建文件` : "在项目根目录新建文件");
+  if (!name) return;
+  const root = repo.repo?.root;
+  if (!root) return;
+  const path = dirPath ? `${dirPath}/${name}` : name;
+  try {
+    await api.createFile(root, path);
+    const s = new Set(dirSetFor(root));
+    for (const d of ancestorDirs(path)) s.add(d);
+    setDirSetFor(root, s);
+    await repo.ensureAllFiles(true);
+    await repo.refresh();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+async function newFolder(dirPath: string) {
+  closeMenu();
+  const name = await promptDialog("新建文件夹", dirPath ? `在「${dirPath}」下新建文件夹` : "在项目根目录新建文件夹");
+  if (!name) return;
+  const root = repo.repo?.root;
+  if (!root) return;
+  const path = dirPath ? `${dirPath}/${name}` : name;
+  try {
+    await api.createDir(root, path);
+    addPendingEmptyDir(root, path);
+    const s = new Set(dirSetFor(root));
+    for (const d of ancestorDirs(path)) s.add(d);
+    setDirSetFor(root, s);
+  } catch (e) {
+    toast(String(e), "error");
+  }
 }
 
 // fetch/pull/push act on the active workspace's store actions, so switch to
@@ -172,17 +158,6 @@ async function pushProject(i: number) {
   }
 }
 
-function toggleDir(path: string) {
-  const root = repo.repo?.root ?? "";
-  const map = repo.mode === "changes" ? collapsedChangesByRoot : expandedAllByRoot;
-  const s = new Set(dirSetFor(map.value, root));
-  if (s.has(path)) s.delete(path);
-  else s.add(path);
-  const next = new Map(map.value);
-  next.set(root, s);
-  map.value = next;
-}
-
 function openRow(row: FileRow) {
   if (row.status) repo.selectFile(row.status);
   else repo.selectPath(row.path);
@@ -193,7 +168,7 @@ const selected = ref<Set<string>>(new Set());
 let anchor: string | null = null;
 
 function fileOrder(): string[] {
-  return allRows.value.filter((r): r is FileRow => r.type === "file").map((r) => r.path);
+  return rows.value.filter((r): r is FileRow => r.type === "file").map((r) => r.path);
 }
 
 function onRowClick(row: FileRow, e: MouseEvent) {
@@ -217,13 +192,11 @@ function onRowClick(row: FileRow, e: MouseEvent) {
     anchor = path;
     return; // toggle selection only; keep the currently-open file
   }
-  // plain click: single select + open
   selected.value = new Set([path]);
   anchor = path;
   openRow(row);
 }
 
-// selected files that are actually changed (only those can be reverted)
 const selectedChanged = computed<FileStatus[]>(() => {
   const map = new Map(repo.files.map((f) => [f.path, f]));
   return [...selected.value].map((p) => map.get(p)).filter((f): f is FileStatus => !!f);
@@ -249,21 +222,9 @@ async function revertSelected() {
 function fileTitle(row: FileRow): string {
   return row.status?.oldPath ? `${row.status.oldPath} → ${row.path}` : row.path;
 }
-
 function badgeOf(kind: ChangeKind | undefined): string {
-  return kind ? BADGE[kind] : "";
+  return kind ? STATUS_BADGE[kind] : "";
 }
-
-function wsTotals(files: FileStatus[]): { add: number; del: number } {
-  let add = 0;
-  let del = 0;
-  for (const f of files) {
-    add += f.additions ?? 0;
-    del += f.deletions ?? 0;
-  }
-  return { add, del };
-}
-
 async function revert(f: FileStatus) {
   const msg =
     f.kind === "untracked"
@@ -274,14 +235,16 @@ async function revert(f: FileStatus) {
   if (await confirmDialog("还原文件", msg)) await repo.revertFile(f);
 }
 
-// ----- right-click context menu (open containing folder / file info) -----
-// relPath is null for project rows — they show "打开所在目录" only, no file info
-const menu = ref<{ x: number; y: number; fullPath: string; relPath: string | null } | null>(null);
+// ----- right-click context menu -----
+type MenuTarget =
+  | { kind: "file"; fullPath: string; relPath: string }
+  | { kind: "dir"; fullPath: string; relPath: string }
+  | { kind: "project"; fullPath: string };
+const menu = ref<{ x: number; y: number; target: MenuTarget } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-async function showMenu(e: MouseEvent, target: { fullPath: string; relPath: string | null }) {
-  menu.value = { x: e.clientX, y: e.clientY, ...target };
-  // keep the menu on screen — rows near the bottom would clip it otherwise
+async function showMenu(e: MouseEvent, target: MenuTarget) {
+  menu.value = { x: e.clientX, y: e.clientY, target };
   await nextTick();
   const el = menuEl.value;
   if (!el || !menu.value) return;
@@ -294,15 +257,21 @@ async function showMenu(e: MouseEvent, target: { fullPath: string; relPath: stri
 
 function openFileMenu(row: FileRow, e: MouseEvent) {
   const root = repo.repo?.root;
-  showMenu(e, { fullPath: root ? `${root}/${row.path}` : row.path, relPath: row.path });
+  showMenu(e, { kind: "file", fullPath: root ? `${root}/${row.path}` : row.path, relPath: row.path });
 }
-
+function openDirMenu(row: Row & { type: "dir" }, e: MouseEvent) {
+  const root = repo.repo?.root;
+  showMenu(e, { kind: "dir", fullPath: root ? `${root}/${row.path}` : row.path, relPath: row.path });
+}
 function openProjMenu(root: string, e: MouseEvent) {
-  showMenu(e, { fullPath: root, relPath: null });
+  showMenu(e, { kind: "project", fullPath: root });
 }
-
 function closeMenu() {
   menu.value = null;
+}
+function menuDirPath(): string {
+  const t = menu.value?.target;
+  return t && t.kind === "dir" ? t.relPath : "";
 }
 
 async function revealInFolder(full: string) {
@@ -313,7 +282,6 @@ async function revealInFolder(full: string) {
     toast(`无法打开所在目录：${err}`, "error");
   }
 }
-
 async function openFileInfo(path: string) {
   closeMenu();
   const root = repo.repo?.root;
@@ -335,7 +303,7 @@ onBeforeUnmount(() => {
 });
 
 function move(delta: number) {
-  const fileRows = allRows.value.filter((r): r is FileRow => r.type === "file");
+  const fileRows = rows.value.filter((r): r is FileRow => r.type === "file");
   if (!fileRows.length) return;
   const idx = fileRows.findIndex((r) => r.path === repo.selectedPath);
   const next = idx < 0 ? 0 : Math.min(Math.max(idx + delta, 0), fileRows.length - 1);
@@ -377,7 +345,7 @@ function onWinPointerMove(e: PointerEvent) {
   if (!s) return;
   if (!s.moved && Math.abs(e.clientY - s.startY) < 6) return;
   s.moved = true;
-  const headers = [...document.querySelectorAll<HTMLElement>(".file-list .proj-header")];
+  const headers = [...document.querySelectorAll<HTMLElement>(".project-panel .proj-header")];
   const over = headers.findIndex((h) => {
     const r = h.getBoundingClientRect();
     return e.clientY >= r.top && e.clientY <= r.bottom;
@@ -393,7 +361,6 @@ function onWinPointerUp() {
   const s = drag.value;
   drag.value = null;
   if (!s || s.moved) return;
-  // no movement: treat as a plain click on that project header
   const idx = repo.workspaces.findIndex((w) => w.repo.root === s.root);
   if (idx >= 0) onProjectClick(idx, s.root);
 }
@@ -408,15 +375,33 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
 
 <template>
   <aside
-    class="file-list"
+    ref="rootEl"
+    class="file-list project-panel"
     :style="{ width: settings.sidebarWidth + 'px' }"
     tabindex="0"
     @keydown.up.prevent="move(-1)"
     @keydown.down.prevent="move(1)"
   >
-    <div class="tabs">
-      <button :class="{ active: repo.mode === 'changes' }" @click="repo.setMode('changes')">更改</button>
-      <button :class="{ active: repo.mode === 'all' }" @click="repo.setMode('all')">全部文件</button>
+    <div class="tree-toolbar">
+      <button title="定位当前文件" :disabled="!repo.selectedPath" @click="locateCurrentFile">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+          <circle cx="8" cy="8" r="1.4" fill="currentColor" />
+          <path d="M8 1v2.4M8 12.6V15M1 8h2.4M12.6 8H15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </svg>
+      </button>
+      <button title="全部展开" @click="expandAll">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 4h5M2 8h5M2 12h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          <path d="M10.5 5.5 13 8l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <button title="全部收起" @click="collapseAll">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2 4h5M2 8h5M2 12h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          <path d="M13 5.5 10.5 8 13 10.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
     </div>
     <div v-if="!repo.workspaces.length" class="list-empty">打开或拖入一个 git 仓库开始 review</div>
     <template v-for="(w, i) in repo.workspaces" :key="w.repo.root">
@@ -438,146 +423,82 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           <template v-if="w.repo.behind">↓{{ w.repo.behind }}</template>
         </span>
         <Spinner v-if="(i === repo.active && repo.loadingStatus) || w.busyOp" :size="12" />
-        <span v-if="repo.mode === 'changes' && w.files.length" class="stats proj-stats">
-          <span class="add">+{{ wsTotals(w.files).add }}</span>
-          <span class="del">−{{ wsTotals(w.files).del }}</span>
-        </span>
         <button
           v-if="w.repo.upstream"
           class="proj-net-btn"
           title="Fetch"
           :disabled="!!w.busyOp"
           @click.stop="fetchProject(i)"
-        >⇣</button>
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 5.2 8 8.4l4-3.2M4 9.6 8 12.8l4-3.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <button
           v-if="w.repo.upstream"
           class="proj-net-btn"
           title="Pull"
           :disabled="!!w.busyOp"
           @click.stop="pullProject(i)"
-        >↓</button>
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 2.5v7M5 6.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M3.5 11v1.5h9V11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <button
           v-if="w.repo.branch"
           class="proj-net-btn"
           title="Push"
           :disabled="!!w.busyOp"
           @click.stop="pushProject(i)"
-        >↑</button>
+        >
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 12.5v-7M5 8.5l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M3.5 11v1.5h9V11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
       <template v-if="isExpanded(i, w.repo.root)">
-        <div v-if="repo.mode === 'changes' && !repo.loadingStatus && !repo.files.length" class="list-empty">
-          工作区干净，没有未提交的更改
-        </div>
-
-        <template v-if="hasStaged">
-          <div class="section-head">
-            <span>已暂存的更改</span>
-            <button class="section-action" title="全部取消暂存" @click.stop="repo.unstageAll()">取消暂存全部</button>
-          </div>
-          <ul>
-      <template v-for="row in stagedRows" :key="row.type === 'dir' ? 'd:' + row.path : 's:' + row.path">
-        <li
-          v-if="row.type === 'dir'"
-          class="dir-row"
-          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
-          @click="toggleDir(row.path)"
-        >
-          <svg class="chevron" :class="{ open: !row.collapsed }" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
-          </svg>
-          <span class="dir-name">{{ row.label }}</span>
-        </li>
-        <li
-          v-else
-          :class="[
-            row.status ? 'k-' + row.status.kind : '',
-            { active: row.path === repo.selectedPath && repo.activeTabStaged, selected: selected.has(row.path) },
-          ]"
-          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
-          @click="onRowClick(row, $event)"
-          @contextmenu.prevent.stop="openFileMenu(row, $event)"
-        >
-          <input
-            v-if="row.status && row.status.kind !== 'conflicted'"
-            type="checkbox"
-            class="stage-check"
-            checked
-            title="取消暂存"
-            @click.stop="toggleStage(row.status)"
-          />
-          <span class="ficon">
-            <img :src="fileIcon(row.path)" alt="" />
-            <span v-if="row.status" class="status-dot" :class="row.status.kind">{{
-              badgeOf(row.status.kind)
-            }}</span>
-          </span>
-          <span class="path" :title="fileTitle(row)">{{ row.name }}</span>
-          <span v-if="row.status" class="stats">
-            <span v-if="row.status.additions != null" class="add">+{{ row.status.additions }}</span>
-            <span v-if="row.status.deletions != null" class="del">−{{ row.status.deletions }}</span>
-          </span>
-        </li>
-        </template>
-          </ul>
-          <div class="section-head">
-            <span>未暂存的更改</span>
-            <button class="section-action" title="全部暂存" @click.stop="repo.stageAll()">暂存全部</button>
-          </div>
-        </template>
-
         <ul>
-      <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.path">
-        <li
-          v-if="row.type === 'dir'"
-          class="dir-row"
-          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
-          @click="toggleDir(row.path)"
-        >
-          <svg class="chevron" :class="{ open: !row.collapsed }" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
-          </svg>
-          <span class="dir-name">{{ row.label }}</span>
-        </li>
-        <li
-          v-else
-          :class="[
-            row.status ? 'k-' + row.status.kind : '',
-            { active: row.path === repo.selectedPath && !repo.activeTabStaged, selected: selected.has(row.path) },
-          ]"
-          :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
-          @click="onRowClick(row, $event)"
-          @contextmenu.prevent.stop="openFileMenu(row, $event)"
-        >
-          <input
-            v-if="row.status && repo.mode === 'changes' && row.status.kind !== 'conflicted'"
-            type="checkbox"
-            class="stage-check"
-            title="暂存"
-            @click.stop="toggleStage(row.status)"
-          />
-          <span class="ficon">
-            <img :src="fileIcon(row.path)" alt="" />
-            <span v-if="row.status" class="status-dot" :class="row.status.kind">{{
-              badgeOf(row.status.kind)
-            }}</span>
-          </span>
-          <span class="path" :title="fileTitle(row)">{{ row.name }}</span>
-          <span v-if="row.status && repo.mode === 'changes'" class="stats">
-            <span v-if="row.status.additions != null" class="add">+{{ row.status.additions }}</span>
-            <span v-if="row.status.deletions != null" class="del">−{{ row.status.deletions }}</span>
-          </span>
-          <button
-            v-if="row.status"
-            class="row-revert"
-            :title="row.status.kind === 'untracked' ? '删除此文件' : '还原此文件'"
-            @click.stop="revert(row.status)"
-          >
-            {{ row.status.kind === "untracked" ? "✕" : "↶" }}
-          </button>
-        </li>
-        </template>
+          <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.path">
+            <li
+              v-if="row.type === 'dir'"
+              class="dir-row"
+              :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
+              @click="toggleDir(row.path)"
+              @contextmenu.prevent.stop="openDirMenu(row, $event)"
+            >
+              <svg class="chevron" :class="{ open: !row.collapsed }" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
+              </svg>
+              <span class="dir-name">{{ row.label }}</span>
+            </li>
+            <li
+              v-else
+              :class="[row.status ? 'k-' + row.status.kind : '', { active: row.path === repo.selectedPath, selected: selected.has(row.path) }]"
+              :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
+              @click="onRowClick(row, $event)"
+              @contextmenu.prevent.stop="openFileMenu(row, $event)"
+            >
+              <span class="ficon">
+                <img :src="fileIcon(row.path)" alt="" />
+                <span v-if="row.status" class="status-dot" :class="row.status.kind">{{ badgeOf(row.status.kind) }}</span>
+              </span>
+              <span class="path" :title="fileTitle(row)">{{ row.name }}</span>
+              <button
+                v-if="row.status"
+                class="row-revert"
+                :title="row.status.kind === 'untracked' ? '删除此文件' : '还原此文件'"
+                @click.stop="revert(row.status)"
+              >
+                {{ row.status.kind === "untracked" ? "✕" : "↶" }}
+              </button>
+            </li>
+          </template>
         </ul>
+        <div v-if="!rows.length" class="list-empty">此项目没有文件</div>
       </template>
     </template>
 
@@ -586,8 +507,6 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
       <button class="btn danger" @click="revertSelected">还原所选</button>
       <button class="btn" @click="clearSelection">取消</button>
     </div>
-
-    <CommitPanel />
 
     <Teleport to="body">
       <div
@@ -598,8 +517,10 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         @click.stop
         @contextmenu.prevent
       >
-        <button @click="revealInFolder(menu.fullPath)">打开所在目录</button>
-        <button v-if="menu.relPath" @click="openFileInfo(menu.relPath)">查看文件信息</button>
+        <button @click="revealInFolder(menu.target.fullPath)">打开所在目录</button>
+        <button v-if="menu.target.kind === 'file'" @click="openFileInfo(menu.target.relPath)">查看文件信息</button>
+        <button v-if="menu.target.kind !== 'file'" @click="newFile(menuDirPath()); closeMenu()">新建文件</button>
+        <button v-if="menu.target.kind !== 'file'" @click="newFolder(menuDirPath()); closeMenu()">新建文件夹</button>
       </div>
     </Teleport>
   </aside>

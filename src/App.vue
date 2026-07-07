@@ -5,13 +5,16 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import AppToolbar from "./components/AppToolbar.vue";
-import FileList from "./components/FileList.vue";
+import ActivityBar from "./components/ActivityBar.vue";
+import ProjectPanel from "./components/ProjectPanel.vue";
+import CommitPanel from "./components/CommitPanel.vue";
+import GitPanel from "./components/GitPanel.vue";
 import DiffView from "./components/DiffView.vue";
 import ViewTabs from "./components/ViewTabs.vue";
 import SummaryView from "./components/SummaryView.vue";
-import HistoryPanel from "./components/HistoryPanel.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
+import PromptDialog from "./components/PromptDialog.vue";
 import FileInfoDialog from "./components/FileInfoDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
@@ -136,23 +139,30 @@ onMounted(async () => {
   <div class="app">
     <AppToolbar @open-settings="settingsOpen = true" />
     <div class="body">
-      <FileList />
-      <div class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
-      <div class="center-col">
-        <ViewTabs />
-        <ConflictResolver v-if="repo.repo && repo.repo.operation !== 'none'" />
-        <template v-else>
-          <SummaryView v-if="repo.ws && !repo.activeTabId" />
-          <DiffView v-show="!(repo.ws && !repo.activeTabId)" />
-        </template>
+      <ActivityBar />
+      <div v-show="!settings.sidebarCollapsed" class="sidebar-panels">
+        <ProjectPanel v-show="settings.activeLeftPanel === 'project'" />
+        <CommitPanel v-show="settings.activeLeftPanel === 'commit'" />
       </div>
-      <HistoryPanel v-if="repo.historyOpen && repo.repo" />
+      <div v-show="!settings.sidebarCollapsed" class="resizer" title="拖动调整宽度" @pointerdown="startResize"></div>
+      <div class="center-area">
+        <div class="center-col">
+          <ViewTabs />
+          <ConflictResolver v-if="repo.repo && repo.repo.operation !== 'none'" />
+          <template v-else>
+            <SummaryView v-if="repo.ws && !repo.activeTabId" />
+            <DiffView v-show="!(repo.ws && !repo.activeTabId)" />
+          </template>
+        </div>
+        <GitPanel v-if="settings.gitPanelOpen && repo.repo" />
+      </div>
     </div>
     <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
     <QuickOpen />
     <SearchPanel />
     <SymbolChooser />
     <ConfirmDialog />
+    <PromptDialog />
     <FileInfoDialog />
     <ToastHost />
   </div>

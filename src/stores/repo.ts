@@ -42,12 +42,19 @@ export interface Workspace {
   content: FileContent | null;
   loadingStatus: boolean;
   loadingDiff: boolean;
-  historyOpen: boolean;
+  /** bumped each time refreshWs completes — an explicit "data just changed"
+   * signal for consumers (e.g. the Git panel's console tab) instead of
+   * inferring it from the loadingStatus spinner flag */
+  refreshSeq: number;
   commitPageSize: number;
   commits: CommitInfo[];
   commitsExhausted: boolean;
   loadingCommits: boolean;
-  expandedCommits: string[];
+  /** when set, the 日志 view is scoped to this branch/ref instead of HEAD */
+  logBranchFilter: string | null;
+  /** commit highlighted in the 日志 table — its files show in the right-hand
+   * panel, IDEA-style (left: graph/table, right: changed files) */
+  logActiveCommit: string | null;
   commitFiles: Record<string, FileStatus[]>;
   selectedCommit: string | null;
   selectedCommitPath: string | null;
@@ -69,12 +76,13 @@ function blankWorkspace(info: RepoInfo): Workspace {
     content: null,
     loadingStatus: false,
     loadingDiff: false,
-    historyOpen: false,
+    refreshSeq: 0,
     commitPageSize: 30,
     commits: [],
     commitsExhausted: false,
     loadingCommits: false,
-    expandedCommits: [],
+    logBranchFilter: null,
+    logActiveCommit: null,
     commitFiles: {},
     selectedCommit: null,
     selectedCommitPath: null,
@@ -128,8 +136,8 @@ export const useRepoStore = defineStore("repo", {
     loadingDiff(): boolean {
       return this.ws?.loadingDiff ?? false;
     },
-    historyOpen(): boolean {
-      return this.ws?.historyOpen ?? false;
+    refreshSeq(): number {
+      return this.ws?.refreshSeq ?? 0;
     },
     commitPageSize(): number {
       return this.ws?.commitPageSize ?? 30;
@@ -143,8 +151,11 @@ export const useRepoStore = defineStore("repo", {
     loadingCommits(): boolean {
       return this.ws?.loadingCommits ?? false;
     },
-    expandedCommits(): string[] {
-      return this.ws?.expandedCommits ?? [];
+    logBranchFilter(): string | null {
+      return this.ws?.logBranchFilter ?? null;
+    },
+    logActiveCommit(): string | null {
+      return this.ws?.logActiveCommit ?? null;
     },
     commitFiles(): Record<string, FileStatus[]> {
       return this.ws?.commitFiles ?? {};
@@ -247,10 +258,11 @@ export const useRepoStore = defineStore("repo", {
         if (this.viewMode === "all") {
           w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
         }
-        if (w.historyOpen) {
-          // re-fetch the already-loaded depth so new commits surface on top
+        if (w.commits.length) {
+          // re-fetch the already-loaded depth so new commits surface on top;
+          // skipped until the Git panel's Log tab has loaded commits at least once
           const count = Math.max(w.commits.length, w.commitPageSize);
-          const list = await api.logCommits(w.repo.root, 0, count);
+          const list = await api.logCommits(w.repo.root, 0, count, w.logBranchFilter);
           w.commits = list;
           w.commitsExhausted = list.length < count;
         }
@@ -263,6 +275,7 @@ export const useRepoStore = defineStore("repo", {
         toast(String(e), "error");
       } finally {
         w.loadingStatus = false;
+        w.refreshSeq++;
         suppressAutoRefreshUntil = Date.now() + 800;
       }
     },
@@ -275,9 +288,9 @@ export const useRepoStore = defineStore("repo", {
       const active = w?.tabs.find((t) => t.id === w.activeTabId);
       if (w && active && !active.commit) await this.loadForTab(w, active);
     },
-    async ensureAllFiles() {
+    async ensureAllFiles(force = false) {
       const w = this.ws;
-      if (!w || w.allFiles.length) return;
+      if (!w || (w.allFiles.length && !force)) return;
       try {
         w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
       } catch (e) {
@@ -761,14 +774,15 @@ export const useRepoStore = defineStore("repo", {
       await this.refreshWs(w);
     },
     /** ----- history panel ----- */
-    async toggleHistory() {
-      const w = this.ws;
-      if (!w) return;
-      w.historyOpen = !w.historyOpen;
-      if (w.historyOpen && !w.commits.length) await this.loadCommits();
-    },
     setCommitPageSize(n: number) {
       if (this.ws) this.ws.commitPageSize = n;
+    },
+    /** scope the 日志 view to one branch/ref (or null to go back to HEAD) */
+    async setLogBranchFilter(branch: string | null) {
+      const w = this.ws;
+      if (!w || w.logBranchFilter === branch) return;
+      w.logBranchFilter = branch;
+      await this.loadCommits(true);
     },
     async loadCommits(reset = false) {
       const w = this.ws;
@@ -777,13 +791,13 @@ export const useRepoStore = defineStore("repo", {
         w.commits = [];
         w.commitsExhausted = false;
         w.commitFiles = {};
-        w.expandedCommits = [];
+        w.logActiveCommit = null;
       }
       if (w.commitsExhausted) return;
       w.loadingCommits = true;
       try {
         const count = w.commitPageSize;
-        const batch = await api.logCommits(w.repo.root, w.commits.length, count);
+        const batch = await api.logCommits(w.repo.root, w.commits.length, count, w.logBranchFilter);
         w.commits.push(...batch);
         if (batch.length < count) w.commitsExhausted = true;
       } catch (e) {
@@ -792,15 +806,12 @@ export const useRepoStore = defineStore("repo", {
         w.loadingCommits = false;
       }
     },
-    async toggleCommit(hash: string) {
+    /** highlight a commit in the 日志 table and load its changed files into
+     * the right-hand panel (IDEA-style left/right split, not inline expand) */
+    async selectLogCommit(hash: string) {
       const w = this.ws;
       if (!w) return;
-      const i = w.expandedCommits.indexOf(hash);
-      if (i >= 0) {
-        w.expandedCommits.splice(i, 1);
-        return;
-      }
-      w.expandedCommits.push(hash);
+      w.logActiveCommit = hash;
       if (!w.commitFiles[hash]) {
         try {
           w.commitFiles[hash] = await api.commitFiles(w.repo.root, hash);

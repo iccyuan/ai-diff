@@ -26,6 +26,15 @@ export const useSettingsStore = defineStore("settings", {
     editorFont: DEFAULT_EDITOR_FONT_ID,
     editorFontSize: 13,
     sidebarWidth: 300,
+    activeLeftPanel: "project" as "project" | "commit",
+    /** clicking the active ActivityBar icon again collapses the Project/Commit
+     * panel instead of switching — IDEA does the same with its tool windows */
+    sidebarCollapsed: false,
+    /** bottom-docked Git tool window (日志/分支/控制台) — separate from the
+     * left Project/Commit switch since it needs the window's full width */
+    gitPanelHeight: 320,
+    gitPanelOpen: false,
+    commitMessageHeight: 110,
     glassEffect: true,
     glassOpacity: 54,
     /** 全部文件 view: also list .gitignore'd / hidden files and folders */
@@ -45,6 +54,10 @@ export const useSettingsStore = defineStore("settings", {
         const font = await persist.get<string>("editorFont");
         const size = await persist.get<number>("editorFontSize");
         const width = await persist.get<number>("sidebarWidth");
+        const panel = await persist.get<string>("activeLeftPanel");
+        const collapsed = await persist.get<boolean>("sidebarCollapsed");
+        const gitH = await persist.get<number>("gitPanelHeight");
+        const commitMsgH = await persist.get<number>("commitMessageHeight");
         const glass = await persist.get<boolean>("glassEffect");
         const glassOp = await persist.get<number>("glassOpacity");
         const hidden = await persist.get<boolean>("showHidden");
@@ -54,6 +67,10 @@ export const useSettingsStore = defineStore("settings", {
         if (font && EDITOR_FONTS.some((f) => f.id === font)) this.editorFont = font;
         if (typeof size === "number" && size >= 10 && size <= 24) this.editorFontSize = size;
         if (typeof width === "number" && width >= 200 && width <= 600) this.sidebarWidth = width;
+        if (panel === "project" || panel === "commit") this.activeLeftPanel = panel;
+        if (typeof collapsed === "boolean") this.sidebarCollapsed = collapsed;
+        if (typeof gitH === "number" && gitH >= 140 && gitH <= 800) this.gitPanelHeight = gitH;
+        if (typeof commitMsgH === "number" && commitMsgH >= 50 && commitMsgH <= 600) this.commitMessageHeight = commitMsgH;
         if (typeof glass === "boolean") this.glassEffect = glass;
         if (typeof glassOp === "number" && glassOp >= 25 && glassOp <= 75) this.glassOpacity = glassOp;
         if (typeof hidden === "boolean") this.showHidden = hidden;
@@ -110,6 +127,33 @@ export const useSettingsStore = defineStore("settings", {
     },
     async saveSidebarWidth() {
       await persist.set("sidebarWidth", this.sidebarWidth);
+      await persist.save();
+    },
+    async setActiveLeftPanel(panel: "project" | "commit") {
+      this.activeLeftPanel = panel;
+      this.sidebarCollapsed = false;
+      await persist.set("activeLeftPanel", panel);
+      await persist.set("sidebarCollapsed", false);
+      await persist.save();
+    },
+    /** clicking the already-active ActivityBar icon calls this instead */
+    async toggleSidebarCollapsed() {
+      this.sidebarCollapsed = !this.sidebarCollapsed;
+      await persist.set("sidebarCollapsed", this.sidebarCollapsed);
+      await persist.save();
+    },
+    async saveGitPanelHeight() {
+      await persist.set("gitPanelHeight", this.gitPanelHeight);
+      await persist.save();
+    },
+    toggleGitPanel() {
+      this.gitPanelOpen = !this.gitPanelOpen;
+    },
+    setGitPanelOpen(v: boolean) {
+      this.gitPanelOpen = v;
+    },
+    async saveCommitMessageHeight() {
+      await persist.set("commitMessageHeight", this.commitMessageHeight);
       await persist.save();
     },
   },

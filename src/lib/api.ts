@@ -72,6 +72,8 @@ export interface CommitInfo {
   deletions: number;
   /** >1 means a merge commit — cherry-pick/revert are disabled for these */
   parents: string[];
+  /** branch/tag names pointing at this commit, e.g. ["main", "origin/main"] */
+  refs: string[];
 }
 
 export type OpOutcome = "applied" | "conflict";
@@ -121,6 +123,13 @@ export interface ImageDiff {
   original: string | null;
   /** data URL of the working-tree version (null for deleted) */
   modified: string | null;
+}
+
+export interface ConsoleEntry {
+  root: string;
+  args: string;
+  ok: boolean;
+  atMs: number;
 }
 
 export const api = {
@@ -186,8 +195,8 @@ export const api = {
   listFiles: (repo: string, showIgnored: boolean) =>
     invoke<string[]>("list_files", { repo, showIgnored }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
-  logCommits: (repo: string, skip: number, count: number) =>
-    invoke<CommitInfo[]>("log_commits", { repo, skip, count }),
+  logCommits: (repo: string, skip: number, count: number, branch: string | null = null) =>
+    invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
   getCommitFileDiff: (repo: string, hash: string, f: FileStatus) =>
     invoke<FileDiff>("get_commit_file_diff", {
@@ -202,6 +211,9 @@ export const api = {
   getImageDiff: (repo: string, path: string, oldPath: string | null, kind: ChangeKind) =>
     invoke<ImageDiff>("get_image_diff", { repo, path, oldPath, kind }),
   fileInfo: (repo: string, path: string) => invoke<FileInfo>("file_info", { repo, path }),
+  createFile: (repo: string, path: string) => invoke<void>("create_file", { repo, path }),
+  createDir: (repo: string, path: string) => invoke<void>("create_dir", { repo, path }),
+  getConsoleLog: (repo: string) => invoke<ConsoleEntry[]>("get_console_log", { repo }),
 };
 
 export interface SearchHit {
