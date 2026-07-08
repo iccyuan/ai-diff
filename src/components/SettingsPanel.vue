@@ -62,6 +62,17 @@ const repo = useRepoStore();
           <span>并排（side-by-side）显示 diff</span>
         </label>
 
+        <label class="field">
+          <span>Pull 默认策略</span>
+          <select
+            :value="settings.pullStrategy"
+            @change="settings.setPullStrategy(($event.target as HTMLSelectElement).value as 'merge' | 'rebase')"
+          >
+            <option value="merge">Merge（默认，创建合并提交）</option>
+            <option value="rebase">Rebase（变基，历史保持线性）</option>
+          </select>
+        </label>
+
         <label class="field row">
           <input
             type="checkbox"

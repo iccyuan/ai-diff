@@ -35,6 +35,16 @@ export const useSettingsStore = defineStore("settings", {
     gitPanelHeight: 320,
     gitPanelOpen: false,
     commitMessageHeight: 110,
+    /** Git log table's Author/Date columns — Subject always flexes to fill
+     * whatever's left, like IDEA's resizable log table columns */
+    logAuthorColWidth: 110,
+    logDateColWidth: 130,
+    /** extra, opt-in git log columns toggled from the log header's right-click menu */
+    logShowHashCol: false,
+    logShowEmailCol: false,
+    logShowChangesCol: false,
+    /** default strategy for the toolbar's Pull button — "支持选择 rebase 和 merge" */
+    pullStrategy: "merge" as "merge" | "rebase",
     glassEffect: true,
     glassOpacity: 54,
     /** 全部文件 view: also list .gitignore'd / hidden files and folders */
@@ -58,6 +68,12 @@ export const useSettingsStore = defineStore("settings", {
         const collapsed = await persist.get<boolean>("sidebarCollapsed");
         const gitH = await persist.get<number>("gitPanelHeight");
         const commitMsgH = await persist.get<number>("commitMessageHeight");
+        const authorColW = await persist.get<number>("logAuthorColWidth");
+        const dateColW = await persist.get<number>("logDateColWidth");
+        const showHashCol = await persist.get<boolean>("logShowHashCol");
+        const showEmailCol = await persist.get<boolean>("logShowEmailCol");
+        const showChangesCol = await persist.get<boolean>("logShowChangesCol");
+        const pullStrategy = await persist.get<string>("pullStrategy");
         const glass = await persist.get<boolean>("glassEffect");
         const glassOp = await persist.get<number>("glassOpacity");
         const hidden = await persist.get<boolean>("showHidden");
@@ -71,6 +87,12 @@ export const useSettingsStore = defineStore("settings", {
         if (typeof collapsed === "boolean") this.sidebarCollapsed = collapsed;
         if (typeof gitH === "number" && gitH >= 140 && gitH <= 800) this.gitPanelHeight = gitH;
         if (typeof commitMsgH === "number" && commitMsgH >= 50 && commitMsgH <= 600) this.commitMessageHeight = commitMsgH;
+        if (typeof authorColW === "number" && authorColW >= 60 && authorColW <= 260) this.logAuthorColWidth = authorColW;
+        if (typeof dateColW === "number" && dateColW >= 80 && dateColW <= 220) this.logDateColWidth = dateColW;
+        if (typeof showHashCol === "boolean") this.logShowHashCol = showHashCol;
+        if (typeof showEmailCol === "boolean") this.logShowEmailCol = showEmailCol;
+        if (typeof showChangesCol === "boolean") this.logShowChangesCol = showChangesCol;
+        if (pullStrategy === "merge" || pullStrategy === "rebase") this.pullStrategy = pullStrategy;
         if (typeof glass === "boolean") this.glassEffect = glass;
         if (typeof glassOp === "number" && glassOp >= 25 && glassOp <= 75) this.glassOpacity = glassOp;
         if (typeof hidden === "boolean") this.showHidden = hidden;
@@ -154,6 +176,22 @@ export const useSettingsStore = defineStore("settings", {
     },
     async saveCommitMessageHeight() {
       await persist.set("commitMessageHeight", this.commitMessageHeight);
+      await persist.save();
+    },
+    async saveLogColumnWidths() {
+      await persist.set("logAuthorColWidth", this.logAuthorColWidth);
+      await persist.set("logDateColWidth", this.logDateColWidth);
+      await persist.save();
+    },
+    async toggleLogCol(col: "hash" | "email" | "changes") {
+      const key = col === "hash" ? "logShowHashCol" : col === "email" ? "logShowEmailCol" : "logShowChangesCol";
+      this[key] = !this[key];
+      await persist.set(key, this[key]);
+      await persist.save();
+    },
+    async setPullStrategy(strategy: "merge" | "rebase") {
+      this.pullStrategy = strategy;
+      await persist.set("pullStrategy", strategy);
       await persist.save();
     },
   },

@@ -52,6 +52,9 @@ export interface Workspace {
   loadingCommits: boolean;
   /** when set, the 日志 view is scoped to this branch/ref instead of HEAD */
   logBranchFilter: string | null;
+  /** when set, the 日志 view shows search_commits matches instead of a plain
+   * paginated log — cleared to go back to normal browsing */
+  logSearchQuery: string | null;
   /** commit highlighted in the 日志 table — its files show in the right-hand
    * panel, IDEA-style (left: graph/table, right: changed files) */
   logActiveCommit: string | null;
@@ -82,6 +85,7 @@ function blankWorkspace(info: RepoInfo): Workspace {
     commitsExhausted: false,
     loadingCommits: false,
     logBranchFilter: null,
+    logSearchQuery: null,
     logActiveCommit: null,
     commitFiles: {},
     selectedCommit: null,
@@ -153,6 +157,9 @@ export const useRepoStore = defineStore("repo", {
     },
     logBranchFilter(): string | null {
       return this.ws?.logBranchFilter ?? null;
+    },
+    logSearchQuery(): string | null {
+      return this.ws?.logSearchQuery ?? null;
     },
     logActiveCommit(): string | null {
       return this.ws?.logActiveCommit ?? null;
@@ -408,6 +415,15 @@ export const useRepoStore = defineStore("repo", {
       } else {
         this.clearActiveView();
       }
+    },
+    /** Eclipse keymap's Ctrl+PageUp/PageDown ("Previous/Next Editor") */
+    cycleTab(direction: 1 | -1) {
+      const w = this.ws;
+      if (!w || !w.tabs.length) return;
+      const i = w.tabs.findIndex((t) => t.id === w.activeTabId);
+      const n = w.tabs.length;
+      const next = i < 0 ? 0 : (i + direction + n) % n;
+      this.activateTab(w.tabs[next].id);
     },
     clearActiveView() {
       const w = this.ws;
@@ -670,14 +686,15 @@ export const useRepoStore = defineStore("repo", {
         await this.refreshWs(w);
       }
     },
-    async pullBranch(remote: string | null = null) {
+    async pullBranch(remote: string | null = null, rebase?: boolean) {
       const w = this.ws;
       if (!w) return;
+      const useRebase = rebase ?? (useSettingsStore().pullStrategy === "rebase");
       w.busyOp = "pull";
       const id = toast("正在 pull…", "progress");
       try {
-        await api.pullBranch(w.repo.root, remote);
-        updateToast(id, "pull 完成", "ok");
+        const outcome = await api.pullBranch(w.repo.root, remote, useRebase);
+        updateToast(id, outcome === "applied" ? "pull 完成" : "pull 产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
       } catch (e) {
         updateToast(id, String(e), "error");
       } finally {
@@ -712,6 +729,17 @@ export const useRepoStore = defineStore("repo", {
       try {
         const outcome = await api.cherryPickCommit(w.repo.root, hash);
         toast(outcome === "applied" ? "已 cherry-pick" : "cherry-pick 产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async dropCommit(hash: string) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        const outcome = await api.dropCommit(w.repo.root, hash);
+        toast(outcome === "applied" ? "已丢弃该提交" : "丢弃提交产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
       } catch (e) {
         toast(String(e), "error");
       }
@@ -784,6 +812,15 @@ export const useRepoStore = defineStore("repo", {
       w.logBranchFilter = branch;
       await this.loadCommits(true);
     },
+    /** search the full history (not just what's been paged in) by
+     * subject/author/email/hash; null/empty goes back to normal browsing */
+    async setLogSearchQuery(query: string | null) {
+      const w = this.ws;
+      const q = query?.trim() || null;
+      if (!w || w.logSearchQuery === q) return;
+      w.logSearchQuery = q;
+      await this.loadCommits(true);
+    },
     async loadCommits(reset = false) {
       const w = this.ws;
       if (!w || w.loadingCommits) return;
@@ -796,10 +833,17 @@ export const useRepoStore = defineStore("repo", {
       if (w.commitsExhausted) return;
       w.loadingCommits = true;
       try {
-        const count = w.commitPageSize;
-        const batch = await api.logCommits(w.repo.root, w.commits.length, count, w.logBranchFilter);
-        w.commits.push(...batch);
-        if (batch.length < count) w.commitsExhausted = true;
+        if (w.logSearchQuery) {
+          // a bounded, non-paginated set of matches — "load more" doesn't
+          // apply while a search is active
+          w.commits = await api.searchCommits(w.repo.root, w.logBranchFilter, w.logSearchQuery);
+          w.commitsExhausted = true;
+        } else {
+          const count = w.commitPageSize;
+          const batch = await api.logCommits(w.repo.root, w.commits.length, count, w.logBranchFilter);
+          w.commits.push(...batch);
+          if (batch.length < count) w.commitsExhausted = true;
+        }
       } catch (e) {
         toast(String(e), "error");
       } finally {

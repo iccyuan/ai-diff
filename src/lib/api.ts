@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type ChangeKind = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
 
-export type RepoOperation = "none" | "merge" | "cherryPick" | "revert";
+export type RepoOperation = "none" | "merge" | "cherryPick" | "revert" | "rebase";
 
 export type ConflictSide =
   | "bothModified"
@@ -170,9 +170,12 @@ export const api = {
   renameBranch: (repo: string, oldName: string, newName: string) =>
     invoke<void>("rename_branch", { repo, old: oldName, new: newName }),
   listRemotes: (repo: string) => invoke<RemoteInfo[]>("list_remotes", { repo }),
+  cloneRepo: (url: string, dest: string, branch: string | null, depth: number | null) =>
+    invoke<void>("clone_repo", { url, dest, branch, depth }),
   fetchRemote: (repo: string, remote: string | null, prune: boolean) =>
     invoke<void>("fetch_remote", { repo, remote, prune }),
-  pullBranch: (repo: string, remote: string | null) => invoke<void>("pull_branch", { repo, remote }),
+  pullBranch: (repo: string, remote: string | null, rebase: boolean) =>
+    invoke<OpOutcome>("pull_branch", { repo, remote, rebase }),
   pushBranch: (repo: string, remote: string, branch: string, setUpstream: boolean, force: ForceMode) =>
     invoke<void>("push_branch", { repo, remote, branch, setUpstream, force }),
   cherryPickCommit: (repo: string, hash: string) => invoke<OpOutcome>("cherry_pick_commit", { repo, hash }),
@@ -180,6 +183,7 @@ export const api = {
   resetTo: (repo: string, hash: string, mode: ResetMode) => invoke<void>("reset_to", { repo, hash, mode }),
   countCommitsBetween: (repo: string, from: string, to: string) =>
     invoke<number>("count_commits_between", { repo, from, to }),
+  dropCommit: (repo: string, hash: string) => invoke<OpOutcome>("drop_commit", { repo, hash }),
   mergeBranch: (repo: string, source: string, noFf: boolean) =>
     invoke<OpOutcome>("merge_branch", { repo, source, noFf }),
   getConflictSides: (repo: string, path: string) => invoke<ConflictSides>("get_conflict_sides", { repo, path }),
@@ -197,6 +201,8 @@ export const api = {
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
   logCommits: (repo: string, skip: number, count: number, branch: string | null = null) =>
     invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch }),
+  searchCommits: (repo: string, branch: string | null, query: string, maxResults = 200) =>
+    invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
   getCommitFileDiff: (repo: string, hash: string, f: FileStatus) =>
     invoke<FileDiff>("get_commit_file_diff", {

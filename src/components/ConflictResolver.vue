@@ -116,6 +116,8 @@ const opLabel = computed(() => {
       return "Cherry-pick";
     case "revert":
       return "回滚提交";
+    case "rebase":
+      return "Rebase";
     default:
       return "";
   }

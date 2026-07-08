@@ -91,7 +91,10 @@ async function locateCurrentFile() {
   setDirSetFor(root, s);
   collapsedProjects.value = new Set([...collapsedProjects.value].filter((r) => r !== root));
   await nextTick();
-  rootEl.value?.querySelector<HTMLElement>(".active")?.scrollIntoView({ block: "center" });
+  // ".active" is also used by the project-header row (li.active is the file
+  // row specifically) — an unscoped selector always matched the header
+  // first since it precedes the file rows in the DOM, making this a no-op.
+  rootEl.value?.querySelector<HTMLElement>("li.active")?.scrollIntoView({ block: "center" });
 }
 
 /* ----- new file / new folder (right-click on a dir row or the project root) ----- */

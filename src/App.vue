@@ -15,6 +15,8 @@ import SummaryView from "./components/SummaryView.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import PromptDialog from "./components/PromptDialog.vue";
+import ResetDialog from "./components/ResetDialog.vue";
+import CloneDialog from "./components/CloneDialog.vue";
 import FileInfoDialog from "./components/FileInfoDialog.vue";
 import ToastHost from "./components/ToastHost.vue";
 import QuickOpen from "./components/QuickOpen.vue";
@@ -48,8 +50,11 @@ function startResize(e: PointerEvent) {
   el.addEventListener("pointerup", up);
 }
 
-// Eclipse shortcuts: Ctrl+Shift+R open resource, Ctrl+H file search.
-// IDEA-style double-tap Shift also opens the file search.
+// Eclipse keymap shortcuts: Ctrl+Shift+R Open Resource, Ctrl+H Search,
+// Ctrl+W / Ctrl+F4 Close Editor, Ctrl+Shift+W Close All, Ctrl+PageUp/PageDown
+// Previous/Next Editor. IDEA-style double-tap Shift also opens the file search.
+// (Ctrl+G "Go to Line" needs no handler here — Monaco binds it natively
+// whenever a diff/file editor has focus.)
 let lastShiftAt = 0;
 function onGlobalKey(e: KeyboardEvent) {
   if (!repo.repo) return;
@@ -77,6 +82,28 @@ function onGlobalKey(e: KeyboardEvent) {
     e.preventDefault();
     e.stopPropagation();
     openFindDialog();
+  } else if (e.shiftKey && e.code === "KeyW") {
+    // Eclipse: Close All
+    e.preventDefault();
+    e.stopPropagation();
+    repo.closeAllTabs();
+  } else if ((!e.shiftKey && e.code === "KeyW") || e.code === "F4") {
+    // Eclipse: Close Editor (Ctrl+W, or Ctrl+F4 on the active tab)
+    if (repo.activeTabId) {
+      e.preventDefault();
+      e.stopPropagation();
+      repo.closeTab(repo.activeTabId);
+    }
+  } else if (e.code === "PageDown") {
+    // Eclipse: Next Editor
+    e.preventDefault();
+    e.stopPropagation();
+    repo.cycleTab(1);
+  } else if (e.code === "PageUp") {
+    // Eclipse: Previous Editor
+    e.preventDefault();
+    e.stopPropagation();
+    repo.cycleTab(-1);
   }
 }
 
@@ -163,6 +190,8 @@ onMounted(async () => {
     <SymbolChooser />
     <ConfirmDialog />
     <PromptDialog />
+    <ResetDialog />
+    <CloneDialog />
     <FileInfoDialog />
     <ToastHost />
   </div>

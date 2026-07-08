@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { useRepoStore } from "../stores/repo";
+import { useSettingsStore } from "../stores/settings";
 import { fileIcon } from "../lib/fileIcons";
 import { confirmDialog } from "../lib/confirm";
 import { promptDialog } from "../lib/prompt";
-import { api } from "../lib/api";
+import { resetDialog } from "../lib/resetDialog";
 import { toast } from "../lib/toast";
 import { buildCommitGraph, graphWidth, type GraphRow } from "../lib/commitGraph";
 import Spinner from "./Spinner.vue";
-import type { CommitInfo, FileStatus, ResetMode } from "../lib/api";
+import type { BranchInfo, CommitInfo, FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
+const settings = useSettingsStore();
 const scroller = ref<HTMLElement | null>(null);
 
 /* ----- branch sidebar: click filters the log to that branch, double-click
@@ -25,6 +27,20 @@ const filteredBranches = computed(() => {
   const list = q ? all.filter((b) => b.name.toLowerCase().includes(q)) : all;
   return { local: list.filter((b) => !b.isRemote), remote: list.filter((b) => b.isRemote) };
 });
+
+/* ----- log search: debounced, searches the full history server-side
+ * (not just what's been paged in) via search_commits ----- */
+const searchInput = ref("");
+let searchDebounce: ReturnType<typeof setTimeout> | undefined;
+watch(searchInput, (v) => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(() => repo.setLogSearchQuery(v), 300);
+});
+function clearSearch() {
+  clearTimeout(searchDebounce);
+  searchInput.value = "";
+  repo.setLogSearchQuery(null);
+}
 
 function onBranchClick(name: string) {
   repo.setLogBranchFilter(repo.logBranchFilter === name ? null : name);
@@ -69,6 +85,52 @@ async function onDeleteBranch(name: string) {
   }
 }
 
+/* ----- branch right-click menu, like IDEA's branch context menu ----- */
+const branchMenu = ref<{ x: number; y: number; branch: BranchInfo } | null>(null);
+const branchMenuEl = ref<HTMLElement | null>(null);
+
+async function openBranchMenu(e: MouseEvent, b: BranchInfo) {
+  branchMenu.value = { x: e.clientX, y: e.clientY, branch: b };
+  await positionMenu(branchMenuEl, branchMenu);
+}
+function closeBranchMenu() {
+  branchMenu.value = null;
+}
+async function onBranchMenuCheckout() {
+  const b = branchMenu.value?.branch;
+  closeBranchMenu();
+  if (!b || b.isCurrent) return;
+  await repo.checkoutBranch(b.name, b.isRemote);
+}
+async function onBranchMenuNewFrom() {
+  const b = branchMenu.value?.branch;
+  closeBranchMenu();
+  if (!b) return;
+  const name = await promptDialog("从此新建分支", `基于「${b.name}」创建新分支`);
+  if (!name) return;
+  await repo.createBranch(name, b.name, true);
+}
+async function onBranchMenuMerge() {
+  const b = branchMenu.value?.branch;
+  closeBranchMenu();
+  if (!b || b.isCurrent) return;
+  await onMergeBranch(b.name);
+}
+async function onBranchMenuRename() {
+  const b = branchMenu.value?.branch;
+  closeBranchMenu();
+  if (!b) return;
+  const newName = await promptDialog("重命名分支", `将「${b.name}」重命名为`, b.name);
+  if (!newName || newName === b.name) return;
+  await repo.renameBranch(b.name, newName);
+}
+async function onBranchMenuDelete() {
+  const b = branchMenu.value?.branch;
+  closeBranchMenu();
+  if (!b || b.isCurrent) return;
+  await onDeleteBranch(b.name);
+}
+
 /* ----- IDEA-style commit graph + branch/tag labels ----- */
 const LANE_W = 14;
 const LANE_COLORS = ["#6c8ef5", "#e0865a", "#5cb85c", "#c9705a", "#9b7bd8", "#4fb8b0", "#d9a441", "#e06c9f"];
@@ -88,19 +150,51 @@ function isRemoteRef(name: string): boolean {
 const activeCommitInfo = computed(() => repo.commits.find((c) => c.hash === repo.logActiveCommit) ?? null);
 const activeCommitFiles = computed(() => (repo.logActiveCommit ? repo.commitFiles[repo.logActiveCommit] : undefined));
 
-// right-click menu: cherry-pick / revert / reset current branch to here.
-// disabled for merge commits (>1 parent) — no -m mainline picker offered.
+// keeps a teleported context menu on-screen near the click, same clamping
+// approach as ProjectPanel/CommitPanel's file context menus
+async function positionMenu<T extends { x: number; y: number }>(elRef: Ref<HTMLElement | null>, stateRef: Ref<T | null>) {
+  await nextTick();
+  const el = elRef.value;
+  if (!el || !stateRef.value) return;
+  const r = el.getBoundingClientRect();
+  const pad = 8;
+  const x = Math.max(pad, Math.min(stateRef.value.x, window.innerWidth - r.width - pad));
+  const y = Math.max(pad, Math.min(stateRef.value.y, window.innerHeight - r.height - pad));
+  stateRef.value = { ...stateRef.value, x, y };
+}
+
+// right-click menu: checkout / branch-from-here / cherry-pick / revert /
+// reset current branch to here / copy hash-subject.
+// cherry-pick/revert disabled for merge commits (>1 parent) — no -m
+// mainline picker offered.
 const menu = ref<{ x: number; y: number; commit: CommitInfo } | null>(null);
 const menuEl = ref<HTMLElement | null>(null);
 
-function openCommitMenu(e: MouseEvent, c: CommitInfo) {
+async function openCommitMenu(e: MouseEvent, c: CommitInfo) {
   menu.value = { x: e.clientX, y: e.clientY, commit: c };
+  await positionMenu(menuEl, menu);
 }
 function closeMenu() {
   menu.value = null;
 }
+
+/* ----- log header right-click: choose optional extra columns, like IDEA's
+ * log table column picker ----- */
+const columnMenu = ref<{ x: number; y: number } | null>(null);
+const columnMenuEl = ref<HTMLElement | null>(null);
+async function openColumnMenu(e: MouseEvent) {
+  columnMenu.value = { x: e.clientX, y: e.clientY };
+  await positionMenu(columnMenuEl, columnMenu);
+}
+function closeColumnMenu() {
+  columnMenu.value = null;
+}
+
 function onDocPointer(e: MouseEvent) {
-  if (!menuEl.value?.contains(e.target as Node)) closeMenu();
+  const t = e.target as Node;
+  if (!menuEl.value?.contains(t)) closeMenu();
+  if (!branchMenuEl.value?.contains(t)) closeBranchMenu();
+  if (!columnMenuEl.value?.contains(t)) closeColumnMenu();
 }
 
 async function onCherryPick() {
@@ -117,35 +211,68 @@ async function onRevertCommit() {
   if (ok) await repo.revertCommit(c.hash);
 }
 
-async function onResetTo(mode: ResetMode) {
+async function onResetTo() {
   const c = menu.value?.commit;
   closeMenu();
   if (!c || !repo.repo) return;
-  if (mode === "hard") {
-    let count: number | null = null;
-    try {
-      count = await api.countCommitsBetween(repo.repo.root, c.hash, "HEAD");
-    } catch (e) {
-      toast(String(e), "error");
-      return;
-    }
-    const ok = await confirmDialog(
-      "重置分支（硬重置）",
-      `确定要将当前分支重置到「${c.subject}」吗？这将丢弃之后 ${count} 个提交，且工作区、暂存区中所有未提交的改动都会被清除。此操作不可撤销。`,
-    );
-    if (!ok) return;
-  } else {
-    const detail =
-      mode === "soft"
-        ? "分支指针会移动到这里，但索引和工作区保持不变——之后的改动会变为「已暂存」。"
-        : "分支指针会移动到这里，工作区文件保持不变，但索引会重置——之后的改动会变为「未暂存」。";
-    const ok = await confirmDialog(
-      `重置分支（${mode === "soft" ? "soft" : "mixed"}）`,
-      `确定要将当前分支重置到「${c.subject}」吗？${detail}`,
-    );
-    if (!ok) return;
-  }
+  const mode = await resetDialog(c.subject, c.hash, repo.repo.root);
+  if (!mode) return;
   await repo.resetTo(c.hash, mode);
+}
+
+// only the tip of the currently checked-out branch can be "undone" via a
+// plain soft reset — anything else needs cherry-pick/reset-to-here instead
+function isCurrentHead(c: CommitInfo): boolean {
+  return !!repo.repo?.branch && c.refs.includes(repo.repo.branch);
+}
+
+async function onUndoCommit() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c || c.parents.length !== 1) return;
+  const ok = await confirmDialog(
+    "撤销上一次提交",
+    `确定要撤销提交「${c.subject}」吗？它的改动会变回已暂存状态，提交本身会从历史中移除。`,
+  );
+  if (!ok) return;
+  await repo.resetTo(c.parents[0], "soft");
+}
+
+async function onDropCommit() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c) return;
+  const ok = await confirmDialog(
+    "丢弃此提交",
+    `确定要从历史中彻底删除提交「${c.subject}」吗？此提交之后的所有提交都会被重新应用（rebase），过程中可能出现冲突需要手动解决，此操作不易撤销。`,
+  );
+  if (!ok) return;
+  await repo.dropCommit(c.hash);
+}
+
+async function onCheckoutRevision() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c) return;
+  await repo.checkoutBranch(c.hash, false); // detached HEAD at this commit
+}
+
+async function onCreateBranchFromCommit() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c) return;
+  const name = await promptDialog("从此创建分支", `基于提交「${c.shortHash}」创建新分支`);
+  if (!name) return;
+  await repo.createBranch(name, c.hash, true);
+}
+
+async function copyText(text: string, label: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`已复制${label}`);
+  } catch (e) {
+    toast(String(e), "error");
+  }
 }
 
 onMounted(() => window.addEventListener("click", onDocPointer));
@@ -177,6 +304,26 @@ function onScroll() {
 
 function name(f: FileStatus): string {
   return f.path.split("/").pop()!;
+}
+
+/* ----- draggable Author/Date column widths, like IDEA's log table ----- */
+function startResizeCol(e: PointerEvent, key: "logAuthorColWidth" | "logDateColWidth", min: number, max: number) {
+  const startX = e.clientX;
+  const startW = settings[key];
+  const el = e.target as HTMLElement;
+  el.setPointerCapture(e.pointerId);
+  const move = (ev: PointerEvent) => {
+    // dragging left gives the column to its right more room (Subject shrinks)
+    settings[key] = Math.min(max, Math.max(min, startW + (startX - ev.clientX)));
+  };
+  const up = (ev: PointerEvent) => {
+    el.releasePointerCapture(ev.pointerId);
+    el.removeEventListener("pointermove", move);
+    el.removeEventListener("pointerup", up);
+    settings.saveLogColumnWidths();
+  };
+  el.addEventListener("pointermove", move);
+  el.addEventListener("pointerup", up);
 }
 
 onMounted(() => {
@@ -213,6 +360,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
             :class="{ current: b.isCurrent, filtered: repo.logBranchFilter === b.name }"
             @click="onBranchClick(b.name)"
             @dblclick="onBranchDblClick(b.name, false, b.isCurrent)"
+            @contextmenu.prevent.stop="openBranchMenu($event, b)"
           >
             <span class="branch-row-name">{{ b.name }}</span>
             <span v-if="b.upstream" class="branch-row-track">
@@ -230,6 +378,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
             :class="{ filtered: repo.logBranchFilter === b.name }"
             @click="onBranchClick(b.name)"
             @dblclick="onBranchDblClick(b.name, true, false)"
+            @contextmenu.prevent.stop="openBranchMenu($event, b)"
           >
             <span class="branch-row-name muted">{{ b.name }}</span>
           </div>
@@ -237,17 +386,30 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         </div>
       </div>
       <div class="log-main">
+        <div class="log-search-bar">
+          <input v-model="searchInput" type="text" class="log-search-input" placeholder="搜索提交（主题 / 作者 / 哈希）…" />
+          <button v-if="searchInput" title="清除搜索" @click="clearSearch">✕</button>
+        </div>
         <div v-if="repo.logBranchFilter" class="log-filter-bar">
           <span>筛选：{{ repo.logBranchFilter }}</span>
           <button title="清除筛选" @click="repo.setLogBranchFilter(null)">✕</button>
         </div>
         <div class="log-content">
           <div class="log-table">
-            <div class="log-header">
-              <span class="log-header-graph"></span>
-              <span class="log-header-subject">Subject</span>
-              <span class="log-header-author">Author</span>
-              <span class="log-header-date">Date</span>
+            <div class="log-header" @contextmenu.prevent.stop="openColumnMenu">
+              <span class="log-header-graph" :style="{ width: graphCols * LANE_W + 'px' }"></span>
+              <span class="log-header-subject">主题</span>
+              <span class="log-header-author" :style="{ width: settings.logAuthorColWidth + 'px' }">
+                <span class="log-col-resizer" @pointerdown="startResizeCol($event, 'logAuthorColWidth', 60, 260)"></span>
+                作者
+              </span>
+              <span class="log-header-date" :style="{ width: settings.logDateColWidth + 'px' }">
+                <span class="log-col-resizer" @pointerdown="startResizeCol($event, 'logDateColWidth', 80, 220)"></span>
+                日期
+              </span>
+              <span v-if="settings.logShowHashCol" class="log-header-hash">哈希</span>
+              <span v-if="settings.logShowEmailCol" class="log-header-email">邮箱</span>
+              <span v-if="settings.logShowChangesCol" class="log-header-changes">改动</span>
             </div>
             <div ref="scroller" class="commits" @scroll.passive="onScroll">
               <div
@@ -307,8 +469,14 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
                   </span>
                   {{ c.subject }}
                 </span>
-                <span class="author-cell" :title="c.author">{{ c.author }}</span>
-                <span class="date-cell" :title="c.date">{{ c.date }}</span>
+                <span class="author-cell" :style="{ width: settings.logAuthorColWidth + 'px' }" :title="c.author">{{ c.author }}</span>
+                <span class="date-cell" :style="{ width: settings.logDateColWidth + 'px' }" :title="c.date">{{ c.date }}</span>
+                <span v-if="settings.logShowHashCol" class="hash-cell" :title="c.hash">{{ c.shortHash }}</span>
+                <span v-if="settings.logShowEmailCol" class="email-cell" :title="c.email">{{ c.email }}</span>
+                <span v-if="settings.logShowChangesCol" class="changes-cell">
+                  <span v-if="c.additions" class="add">+{{ c.additions }}</span>
+                  <span v-if="c.deletions" class="del">−{{ c.deletions }}</span>
+                </span>
               </div>
               <div v-if="repo.loadingCommits" class="list-tail muted"><Spinner :size="18" /></div>
               <div v-else-if="repo.commitsExhausted && repo.commits.length" class="list-tail muted">已到最早提交</div>
@@ -362,11 +530,62 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         @click.stop
         @contextmenu.prevent
       >
+        <button @click="onCheckoutRevision">检出此提交</button>
+        <button @click="onCreateBranchFromCommit">从此创建分支…</button>
+        <button :disabled="menu.commit.parents.length !== 1 || !isCurrentHead(menu.commit)" @click="onUndoCommit">撤销上一次提交</button>
+        <div class="ctx-sep"></div>
         <button :disabled="menu.commit.parents.length > 1" @click="onCherryPick">Cherry-pick</button>
         <button :disabled="menu.commit.parents.length > 1" @click="onRevertCommit">Revert Commit</button>
-        <button @click="onResetTo('soft')">重置当前分支到这里（soft）</button>
-        <button @click="onResetTo('mixed')">重置当前分支到这里（mixed）</button>
-        <button @click="onResetTo('hard')">重置当前分支到这里（hard）</button>
+        <div class="ctx-sep"></div>
+        <button @click="onResetTo">重置当前分支到这里…</button>
+        <button :disabled="menu.commit.parents.length > 1" @click="onDropCommit">丢弃此提交…</button>
+        <div class="ctx-sep"></div>
+        <button @click="copyText(menu.commit.hash, '提交哈希')">复制提交哈希</button>
+        <button @click="copyText(menu.commit.subject, '提交信息')">复制提交信息</button>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="columnMenu"
+        ref="columnMenuEl"
+        class="ctx-menu"
+        :style="{ left: columnMenu.x + 'px', top: columnMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button class="ctx-check-item" @click="settings.toggleLogCol('hash')">
+          <span class="ctx-check">{{ settings.logShowHashCol ? "✓" : "" }}</span>
+          提交哈希
+        </button>
+        <button class="ctx-check-item" @click="settings.toggleLogCol('email')">
+          <span class="ctx-check">{{ settings.logShowEmailCol ? "✓" : "" }}</span>
+          作者邮箱
+        </button>
+        <button class="ctx-check-item" @click="settings.toggleLogCol('changes')">
+          <span class="ctx-check">{{ settings.logShowChangesCol ? "✓" : "" }}</span>
+          改动行数
+        </button>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="branchMenu"
+        ref="branchMenuEl"
+        class="ctx-menu"
+        :style="{ left: branchMenu.x + 'px', top: branchMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuCheckout">检出 '{{ branchMenu.branch.name }}'</button>
+        <button @click="onBranchMenuNewFrom">从此新建分支…</button>
+        <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuMerge">合并到当前分支</button>
+        <template v-if="!branchMenu.branch.isRemote">
+          <div class="ctx-sep"></div>
+          <button @click="onBranchMenuRename">重命名…</button>
+          <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuDelete">删除…</button>
+        </template>
       </div>
     </Teleport>
   </aside>

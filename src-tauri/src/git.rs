@@ -18,6 +18,7 @@ pub enum RepoOperation {
     Merge,
     CherryPick,
     Revert,
+    Rebase,
 }
 
 #[derive(Serialize)]
@@ -269,6 +270,8 @@ fn detect_operation(repo: &Path) -> RepoOperation {
         RepoOperation::CherryPick
     } else if gd.join("REVERT_HEAD").exists() {
         RepoOperation::Revert
+    } else if gd.join("rebase-merge").exists() || gd.join("rebase-apply").exists() {
+        RepoOperation::Rebase
     } else {
         RepoOperation::None
     }
@@ -1068,6 +1071,50 @@ pub async fn log_commits(
     Ok(commits)
 }
 
+/// Scans history in batches (reusing `log_commits`), matching `query`
+/// case-insensitively against hash / author / email / subject, until either
+/// `max_results` matches are found or `SCAN_CAP` commits have been scanned —
+/// git has no single revision-walk flag that ORs a message/author/hash
+/// substring together, so filtering happens on our side instead.
+#[tauri::command]
+pub async fn search_commits(
+    repo: String,
+    branch: Option<String>,
+    query: String,
+    max_results: u32,
+) -> Result<Vec<CommitInfo>, String> {
+    const SCAN_CAP: u32 = 10_000;
+    const BATCH: u32 = 500;
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut matches = Vec::new();
+    let mut skip = 0u32;
+    while skip < SCAN_CAP && (matches.len() as u32) < max_results {
+        let batch = log_commits(repo.clone(), skip, BATCH, branch.clone()).await?;
+        let got = batch.len() as u32;
+        for c in batch {
+            let hit = c.hash.to_lowercase().contains(&q)
+                || c.short_hash.to_lowercase().contains(&q)
+                || c.author.to_lowercase().contains(&q)
+                || c.email.to_lowercase().contains(&q)
+                || c.subject.to_lowercase().contains(&q);
+            if hit {
+                matches.push(c);
+                if matches.len() as u32 >= max_results {
+                    break;
+                }
+            }
+        }
+        if got < BATCH {
+            break; // exhausted history
+        }
+        skip += BATCH;
+    }
+    Ok(matches)
+}
+
 #[tauri::command]
 pub async fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);
@@ -1634,6 +1681,31 @@ pub async fn list_remotes(repo: String) -> Result<Vec<RemoteInfo>, String> {
     Ok(remotes)
 }
 
+/// clones `url` into `dest` (a not-yet-existing or empty directory), optionally
+/// scoped to a single branch and/or shallow. Runs with `dest`'s parent as the
+/// working directory since `dest` itself doesn't exist as a repo yet.
+#[tauri::command]
+pub async fn clone_repo(url: String, dest: String, branch: Option<String>, depth: Option<u32>) -> Result<(), String> {
+    let dest_path = PathBuf::from(&dest);
+    let cwd = dest_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+
+    let depth_arg = depth.filter(|d| *d > 0).map(|d| d.to_string());
+    let mut args: Vec<&str> = vec!["clone"];
+    if let Some(b) = &branch {
+        args.push("--branch");
+        args.push(b);
+        args.push("--single-branch");
+    }
+    if let Some(d) = &depth_arg {
+        args.push("--depth");
+        args.push(d);
+    }
+    args.push(&url);
+    args.push(&dest);
+    run_git(&cwd, &args, None)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> Result<(), String> {
     let repo = PathBuf::from(repo);
@@ -1649,14 +1721,14 @@ pub async fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> 
 }
 
 #[tauri::command]
-pub async fn pull_branch(repo: String, remote: Option<String>) -> Result<(), String> {
+pub async fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
     let repo = PathBuf::from(repo);
-    let mut args = vec!["pull"];
+    let mut args = vec!["pull", if rebase { "--rebase" } else { "--no-rebase" }];
     if let Some(r) = &remote {
         args.push(r);
     }
-    run_git(&repo, &args, None)?;
-    Ok(())
+    let result = run_git(&repo, &args, None);
+    classify_op_result(&repo, result)
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1758,6 +1830,19 @@ pub async fn count_commits_between(repo: String, from: String, to: String) -> Re
     let spec = format!("{from}..{to}");
     let out = run_git_text(&repo, &["rev-list", "--count", &spec])?;
     out.trim().parse::<u32>().map_err(|_| "无法解析提交数量".to_string())
+}
+
+/// removes a single commit from history by replaying everything after it onto
+/// its parent (`git rebase --onto <hash>^ <hash>`) — only well-defined for a
+/// commit with exactly one parent (the UI disables this for merge commits,
+/// same restriction as cherry-pick/revert) and only works if `hash` is
+/// actually an ancestor of HEAD; git reports a conflict/error otherwise.
+#[tauri::command]
+pub async fn drop_commit(repo: String, hash: String) -> Result<OpOutcome, String> {
+    let repo = PathBuf::from(repo);
+    let parent = format!("{hash}^");
+    let result = run_git(&repo, &["rebase", "--onto", &parent, &hash], None);
+    classify_op_result(&repo, result)
 }
 
 #[tauri::command]
@@ -1905,7 +1990,8 @@ pub async fn continue_operation(repo: String) -> Result<OpOutcome, String> {
         RepoOperation::Merge => &["merge", "--continue"],
         RepoOperation::CherryPick => &["cherry-pick", "--continue"],
         RepoOperation::Revert => &["revert", "--continue"],
-        RepoOperation::None => return Err("当前没有进行中的合并 / cherry-pick / revert".to_string()),
+        RepoOperation::Rebase => &["rebase", "--continue"],
+        RepoOperation::None => return Err("当前没有进行中的合并 / cherry-pick / revert / rebase".to_string()),
     };
     let result = run_git_with_env(&repo, args, &[("GIT_EDITOR", "true")]);
     classify_op_result(&repo, result)
@@ -1918,7 +2004,8 @@ pub async fn abort_operation(repo: String) -> Result<(), String> {
         RepoOperation::Merge => &["merge", "--abort"],
         RepoOperation::CherryPick => &["cherry-pick", "--abort"],
         RepoOperation::Revert => &["revert", "--abort"],
-        RepoOperation::None => return Err("当前没有进行中的合并 / cherry-pick / revert".to_string()),
+        RepoOperation::Rebase => &["rebase", "--abort"],
+        RepoOperation::None => return Err("当前没有进行中的合并 / cherry-pick / revert / rebase".to_string()),
     };
     run_git(&repo, args, None)?;
     Ok(())
@@ -2129,8 +2216,17 @@ mod repo_tests {
     fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> Result<(), String> {
         bl(super::fetch_remote(repo, remote, prune))
     }
-    fn pull_branch(repo: String, remote: Option<String>) -> Result<(), String> {
-        bl(super::pull_branch(repo, remote))
+    fn clone_repo(url: String, dest: String, branch: Option<String>, depth: Option<u32>) -> Result<(), String> {
+        bl(super::clone_repo(url, dest, branch, depth))
+    }
+    fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
+        bl(super::pull_branch(repo, remote, rebase))
+    }
+    fn drop_commit(repo: String, hash: String) -> Result<OpOutcome, String> {
+        bl(super::drop_commit(repo, hash))
+    }
+    fn search_commits(repo: String, branch: Option<String>, query: String, max_results: u32) -> Result<Vec<CommitInfo>, String> {
+        bl(super::search_commits(repo, branch, query, max_results))
     }
     fn push_branch(
         repo: String,
@@ -3031,7 +3127,7 @@ mod repo_tests {
         run_git(&other_dir, &["commit", "-qm", "other"], None).unwrap();
         run_git(&other_dir, &["push", "-q"], None).unwrap();
 
-        pull_branch(local.root(), None).unwrap();
+        pull_branch(local.root(), None, false).unwrap();
         assert!(local.path().join("b.txt").is_file(), "pull must merge the remote commit into the worktree");
         assert_eq!(local.porcelain(), "");
         let _ = branch;
@@ -3562,5 +3658,184 @@ mod repo_tests {
         let _ = checkout_branch(a.root(), "does-not-exist".into(), false);
         let log_a2 = get_console_log(a.root()).unwrap();
         assert!(log_a2.iter().any(|e| !e.ok));
+    }
+
+    #[test]
+    fn search_commits_matches_subject_author_and_hash() {
+        let r = TempRepo::new("search-commits");
+        r.write("a.txt", b"a\n");
+        r.commit_all();
+        run_git(r.path(), &["commit", "--amend", "-qm", "add alpha feature"], None).unwrap();
+        r.write("b.txt", b"b\n");
+        r.commit_all();
+        run_git(r.path(), &["commit", "--amend", "-qm", "fix beta bug"], None).unwrap();
+
+        let by_subject = search_commits(r.root(), None, "alpha".into(), 10).unwrap();
+        assert_eq!(by_subject.len(), 1);
+        assert_eq!(by_subject[0].subject, "add alpha feature");
+
+        // case-insensitive, matches the seeded test author's email
+        let by_author = search_commits(r.root(), None, "T@TEST".into(), 10).unwrap();
+        assert_eq!(by_author.len(), 2);
+
+        let by_hash = search_commits(r.root(), None, by_subject[0].short_hash.clone(), 10).unwrap();
+        assert_eq!(by_hash.len(), 1);
+        assert_eq!(by_hash[0].hash, by_subject[0].hash);
+
+        let none = search_commits(r.root(), None, "nomatch_xyz".into(), 10).unwrap();
+        assert!(none.is_empty());
+
+        // max_results caps the returned matches even when more exist
+        let capped = search_commits(r.root(), None, "t@test".into(), 1).unwrap();
+        assert_eq!(capped.len(), 1);
+    }
+
+    #[test]
+    fn drop_commit_removes_linear_ancestor_cleanly() {
+        let r = TempRepo::new("drop-commit");
+        r.write("a.txt", b"1\n");
+        r.commit_all();
+        r.write("b.txt", b"2\n");
+        r.commit_all();
+        r.write("c.txt", b"3\n");
+        r.commit_all();
+
+        let commits = log_commits(r.root(), 0, 10).unwrap();
+        assert_eq!(commits.len(), 3);
+        let to_drop = &commits[1]; // the middle ("b.txt") commit
+
+        let outcome = drop_commit(r.root(), to_drop.hash.clone()).unwrap();
+        assert_eq!(outcome, OpOutcome::Applied);
+
+        let after = log_commits(r.root(), 0, 10).unwrap();
+        assert_eq!(after.len(), 2);
+        assert!(after.iter().all(|c| c.hash != to_drop.hash));
+        assert!(r.path().join("a.txt").exists());
+        assert!(!r.path().join("b.txt").exists(), "the dropped commit's own change must be gone");
+        assert!(r.path().join("c.txt").exists(), "commits after the dropped one must survive, replayed");
+        assert_eq!(r.porcelain(), "");
+    }
+
+    #[test]
+    fn drop_commit_conflict_then_abort() {
+        let r = TempRepo::new("drop-commit-conflict");
+        r.write("f.txt", b"orig\n");
+        r.commit_all();
+        r.write("f.txt", b"commit2-value\n");
+        r.commit_all();
+        r.write("f.txt", b"commit3-value\n");
+        r.commit_all();
+
+        let commits = log_commits(r.root(), 0, 10).unwrap();
+        let to_drop = &commits[1]; // the "commit2-value" commit; commit3 edits the same line
+
+        let outcome = drop_commit(r.root(), to_drop.hash.clone()).unwrap();
+        assert_eq!(outcome, OpOutcome::Conflict);
+        assert_eq!(open_repo(r.root()).unwrap().operation, RepoOperation::Rebase);
+
+        abort_operation(r.root()).unwrap();
+        assert_eq!(open_repo(r.root()).unwrap().operation, RepoOperation::None);
+        assert_eq!(r.porcelain(), "");
+    }
+
+    #[test]
+    fn pull_branch_with_rebase_replays_local_commit_on_top() {
+        let (bare_dir, local, _branch) = bare_remote_with_clone("pull-rebase");
+
+        // a second clone pushes a commit to the shared remote
+        let other_dir = std::env::temp_dir().join(format!("ai-diff-test-other-pull-rebase-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&other_dir);
+        run_git(&std::env::temp_dir(), &["clone", "-q", bare_dir.to_str().unwrap(), other_dir.to_str().unwrap()], None).unwrap();
+        run_git(&other_dir, &["config", "user.email", "t@test"], None).unwrap();
+        run_git(&other_dir, &["config", "user.name", "t"], None).unwrap();
+        std::fs::write(other_dir.join("remote.txt"), b"remote\n").unwrap();
+        run_git(&other_dir, &["add", "-A"], None).unwrap();
+        run_git(&other_dir, &["commit", "-qm", "remote change"], None).unwrap();
+        run_git(&other_dir, &["push", "-q"], None).unwrap();
+
+        // meanwhile the local clone makes its own unpushed commit
+        local.write("local.txt", b"local\n");
+        local.commit_all();
+
+        let outcome = pull_branch(local.root(), None, true).unwrap();
+        assert_eq!(outcome, OpOutcome::Applied);
+        assert!(local.path().join("remote.txt").is_file());
+        assert!(local.path().join("local.txt").is_file());
+        // a rebase replays the local commit on top instead of merging — the
+        // tip must still be a plain single-parent commit, not a merge commit
+        let commits = log_commits(local.root(), 0, 5).unwrap();
+        assert_eq!(commits[0].parents.len(), 1, "rebase must not create a merge commit");
+
+        let _ = std::fs::remove_dir_all(&bare_dir);
+        let _ = std::fs::remove_dir_all(&other_dir);
+    }
+
+    #[test]
+    fn clone_repo_full_history() {
+        let bare_dir = std::env::temp_dir().join(format!("ai-diff-test-clonebare-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&bare_dir);
+        std::fs::create_dir_all(&bare_dir).unwrap();
+        run_git(&bare_dir, &["init", "-q", "--bare"], None).unwrap();
+
+        let seed = TempRepo::new("clone-seed");
+        seed.write("a.txt", b"1\n");
+        seed.commit_all();
+        seed.write("b.txt", b"2\n");
+        seed.commit_all();
+        let branch = current_branch(&seed);
+        run_git(seed.path(), &["push", "-q", bare_dir.to_str().unwrap(), &format!("HEAD:{branch}")], None).unwrap();
+
+        let dest_parent = std::env::temp_dir().join(format!("ai-diff-test-clonedest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest_parent);
+        std::fs::create_dir_all(&dest_parent).unwrap();
+        let dest = dest_parent.join("cloned");
+
+        clone_repo(bare_dir.to_str().unwrap().to_string(), dest.to_str().unwrap().to_string(), None, None).unwrap();
+        assert!(dest.join(".git").exists());
+        assert!(dest.join("a.txt").exists());
+        assert!(dest.join("b.txt").exists());
+        let log = run_git_text(&dest, &["log", "--oneline"]).unwrap();
+        assert_eq!(log.lines().count(), 2, "full clone must have both commits");
+
+        let _ = std::fs::remove_dir_all(&bare_dir);
+        let _ = std::fs::remove_dir_all(&dest_parent);
+    }
+
+    #[test]
+    fn clone_repo_shallow_and_single_branch() {
+        let bare_dir = std::env::temp_dir().join(format!("ai-diff-test-clonebare2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&bare_dir);
+        std::fs::create_dir_all(&bare_dir).unwrap();
+        run_git(&bare_dir, &["init", "-q", "--bare"], None).unwrap();
+
+        let seed = TempRepo::new("clone-seed2");
+        seed.write("a.txt", b"1\n");
+        seed.commit_all();
+        let branch = current_branch(&seed);
+        run_git(seed.path(), &["push", "-q", bare_dir.to_str().unwrap(), &format!("HEAD:{branch}")], None).unwrap();
+        seed.write("b.txt", b"2\n");
+        seed.commit_all();
+        run_git(seed.path(), &["push", "-q", bare_dir.to_str().unwrap(), &format!("HEAD:{branch}")], None).unwrap();
+        // a second branch on the remote, which single-branch clone must not fetch
+        run_git(seed.path(), &["branch", "other-branch"], None).unwrap();
+        run_git(seed.path(), &["push", "-q", bare_dir.to_str().unwrap(), "other-branch"], None).unwrap();
+
+        let dest_parent = std::env::temp_dir().join(format!("ai-diff-test-clonedest2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dest_parent);
+        std::fs::create_dir_all(&dest_parent).unwrap();
+        let dest = dest_parent.join("cloned");
+
+        // git silently ignores --depth for a plain local-path clone ("use
+        // file:// instead") — use a file:// URL so shallow clone actually applies
+        let file_url = format!("file:///{}", bare_dir.to_str().unwrap().replace('\\', "/"));
+        clone_repo(file_url, dest.to_str().unwrap().to_string(), Some(branch.clone()), Some(1)).unwrap();
+        assert!(dest.join(".git").exists());
+        let log = run_git_text(&dest, &["log", "--oneline"]).unwrap();
+        assert_eq!(log.lines().count(), 1, "depth=1 must only fetch the tip commit");
+        let branches = run_git_text(&dest, &["branch", "-r"]).unwrap();
+        assert!(!branches.contains("other-branch"), "single-branch clone must not fetch other branches");
+
+        let _ = std::fs::remove_dir_all(&bare_dir);
+        let _ = std::fs::remove_dir_all(&dest_parent);
     }
 }

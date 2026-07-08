@@ -135,6 +135,9 @@ pub fn run() {
             git::create_file,
             git::create_dir,
             git::get_console_log,
+            git::drop_commit,
+            git::search_commits,
+            git::clone_repo,
             watcher::watch_repo,
             watcher::unwatch_repo,
             new_window
