@@ -10,7 +10,6 @@ import { toast } from "../lib/toast";
 import { fileIcon } from "../lib/fileIcons";
 import { allDirPaths, ancestorDirs, buildRows, STATUS_BADGE, type FileRow, type Row } from "../lib/fileTree";
 import Spinner from "./Spinner.vue";
-import BranchSwitcher from "./BranchSwitcher.vue";
 import { api, type ChangeKind, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
@@ -419,8 +418,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
           <path d="M5.7 13.7 5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" />
         </svg>
         <span class="proj-name">{{ projName(w.repo.root) }}</span>
-        <BranchSwitcher v-if="w.repo.branch" :workspace="w" :index="i" />
-        <span v-else-if="!w.repo.hasHead" class="branch warn">空仓库</span>
+        <span v-if="!w.repo.hasHead" class="branch warn">空仓库</span>
         <span v-if="w.repo.ahead || w.repo.behind" class="ahead-behind">
           <template v-if="w.repo.ahead">↑{{ w.repo.ahead }}</template>
           <template v-if="w.repo.behind">↓{{ w.repo.behind }}</template>

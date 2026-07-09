@@ -3,14 +3,16 @@ import { nextTick, ref, watch } from "vue";
 import { promptState, settlePrompt } from "../lib/prompt";
 
 const inputEl = ref<HTMLInputElement | null>(null);
+const textareaEl = ref<HTMLTextAreaElement | null>(null);
 
 watch(
   () => promptState.open,
   async (open) => {
     if (!open) return;
     await nextTick();
-    inputEl.value?.focus();
-    inputEl.value?.select();
+    const el = promptState.multiline ? textareaEl.value : inputEl.value;
+    el?.focus();
+    el?.select();
   },
 );
 </script>
@@ -21,7 +23,19 @@ watch(
       <div class="modal">
         <h3>{{ promptState.title }}</h3>
         <p v-if="promptState.message">{{ promptState.message }}</p>
+        <textarea
+          v-if="promptState.multiline"
+          ref="textareaEl"
+          v-model="promptState.value"
+          class="prompt-input prompt-textarea"
+          rows="8"
+          spellcheck="false"
+          @keydown.ctrl.enter="settlePrompt(true)"
+          @keydown.meta.enter="settlePrompt(true)"
+          @keydown.esc="settlePrompt(false)"
+        ></textarea>
         <input
+          v-else
           ref="inputEl"
           v-model="promptState.value"
           type="text"

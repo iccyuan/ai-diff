@@ -43,17 +43,24 @@
   --glass-rgb: 34, 34, 38;
 }
 
-/* all glass tints derive from one opacity knob; the Settings slider sets --glass-op */
+/* all glass tints derive from one opacity knob; the Settings slider sets --glass-op.
+ * Windows 11 ignores windowEffects.color (only Win10 1903+ honors an acrylic
+ * tint), so the native acrylic material behind the window keeps its own
+ * grayish cast no matter what we configure there — the only lever we have is
+ * making our own translucent layers opaque enough to dominate over it. A
+ * flat +0.15 baseline (added to every tier, keeping their relative spacing)
+ * makes the base tier read as solid white instead of gray-tinted even at
+ * the slider's original range. */
 :root {
   --glass-op: 0.54;
   /* extra-translucent tint for popups floating over opaque panels (e.g. the
      recent-projects dropdown) — lower opacity lets the acrylic desktop show
      through more, since CSS backdrop-filter can't blur app content here */
-  --glass-thin: rgba(var(--glass-rgb), calc(var(--glass-op) - 0.08));
-  --glass: rgba(var(--glass-rgb), var(--glass-op));
-  --glass-menu: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.06));
-  --glass-strong: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.18));
-  --glass-editor: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.28));
+  --glass-thin: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.07));
+  --glass: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.15));
+  --glass-menu: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.21));
+  --glass-strong: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.33));
+  --glass-editor: rgba(var(--glass-rgb), calc(var(--glass-op) + 0.43));
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -64,6 +71,11 @@
   --control-hover: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
   --focus-ring: color-mix(in srgb, var(--accent) 55%, transparent);
   --ease-ui: cubic-bezier(0.2, 0, 0, 1);
+  /* custom resize cursors: a plain double-chevron (white halo for contrast +
+   * a thin accent-blue line), no pill background — deliberately minimal so it
+   * reads cleanly at 24x24 instead of looking busy */
+  --cursor-col-resize: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48ZyBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMSA3LjV2OU0xMyA3LjV2OU04LjI1IDguNzUgNC43NSAxMmwzLjUgMy4yNU0xNS43NSA4Ljc1IDE5LjI1IDEybC0zLjUgMy4yNSIgc3Ryb2tlPSIjMGIxMjIwIiBzdHJva2Utd2lkdGg9IjMuNiIgb3BhY2l0eT0iLjcyIi8+PHBhdGggZD0iTTExIDcuNXY5TTEzIDcuNXY5TTguMjUgOC43NSA0Ljc1IDEybDMuNSAzLjI1TTE1Ljc1IDguNzUgMTkuMjUgMTJsLTMuNSAzLjI1IiBzdHJva2U9IiNmOGZhZmMiIHN0cm9rZS13aWR0aD0iMi4yIiBvcGFjaXR5PSIuOTgiLz48cGF0aCBkPSJNOC4yNSA4Ljc1IDQuNzUgMTJsMy41IDMuMjVNMTUuNzUgOC43NSAxOS4yNSAxMmwtMy41IDMuMjUiIHN0cm9rZT0iIzQwOWNmZiIgc3Ryb2tlLXdpZHRoPSIxLjA1Ii8+PHBhdGggZD0iTTExIDcuNXY5TTEzIDcuNXY5IiBzdHJva2U9IiM0MDljZmYiIHN0cm9rZS13aWR0aD0iLjg1IiBvcGFjaXR5PSIuNzgiLz48L2c+PC9zdmc+") 12 12, col-resize;
+  --cursor-row-resize: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0Ij48ZyBmaWxsPSJub25lIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik03LjUgMTFoOU03LjUgMTNoOU04Ljc1IDguMjUgMTIgNC43NWwzLjI1IDMuNU04Ljc1IDE1Ljc1IDEyIDE5LjI1bDMuMjUtMy41IiBzdHJva2U9IiMwYjEyMjAiIHN0cm9rZS13aWR0aD0iMy42IiBvcGFjaXR5PSIuNzIiLz48cGF0aCBkPSJNNy41IDExaDlNNy41IDEzaDlNOC43NSA4LjI1IDEyIDQuNzVsMy4yNSAzLjVNOC43NSAxNS43NSAxMiAxOS4yNWwzLjI1LTMuNSIgc3Ryb2tlPSIjZjhmYWZjIiBzdHJva2Utd2lkdGg9IjIuMiIgb3BhY2l0eT0iLjk4Ii8+PHBhdGggZD0iTTguNzUgOC4yNSAxMiA0Ljc1bDMuMjUgMy41TTguNzUgMTUuNzUgMTIgMTkuMjVsMy4yNS0zLjUiIHN0cm9rZT0iIzQwOWNmZiIgc3Ryb2tlLXdpZHRoPSIxLjA1Ii8+PHBhdGggZD0iTTcuNSAxMWg5TTcuNSAxM2g5IiBzdHJva2U9IiM0MDljZmYiIHN0cm9rZS13aWR0aD0iLjg1IiBvcGFjaXR5PSIuNzgiLz48L2c+PC9zdmc+") 12 12, row-resize;
 }
 
 /* glass effect toggle (Settings): fall back to solid surfaces + no blur when off */
@@ -711,32 +723,17 @@ body {
   margin: 8px 12px 0;
 }
 
+/* no visible bar — the custom row-resize cursor (see --cursor-row-resize) is
+ * the only affordance; a drawn line here, even hover-only, kept reading as
+ * a harsh/too-prominent divider no matter how faint */
 .commit-message-resizer {
   position: absolute;
   top: -4px;
   left: 0;
   right: 0;
   height: 7px;
-  cursor: row-resize;
+  cursor: var(--cursor-row-resize);
   z-index: 2;
-}
-
-/* a crisp, full-width 2px bar — same grip language as the other resizers */
-.commit-message-resizer::after {
-  content: "";
-  position: absolute;
-  left: 3px;
-  right: 3px;
-  top: 2px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--border);
-  transition: background 0.15s var(--ease-ui);
-}
-
-.commit-message-resizer:hover::after,
-.commit-message-resizer:active::after {
-  background: var(--accent);
 }
 
 .commit-message {
@@ -768,19 +765,9 @@ body {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px 10px;
-}
-
-.amend-check {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--fg-muted);
-  cursor: pointer;
-  white-space: nowrap;
 }
 
 select {
@@ -1012,7 +999,9 @@ input[type="checkbox"]:checked::after {
   display: flex;
   flex-direction: column;
   min-height: 140px;
-  border-top: 1px solid var(--border);
+  /* no border-top here — the resizer's own grip bar (which overlaps this
+   * edge) already reads as the divider; a separate border produced a
+   * doubled-line look right above it */
 }
 
 .git-tool-window::before {
@@ -1025,32 +1014,15 @@ input[type="checkbox"]:checked::after {
   -webkit-backdrop-filter: blur(24px) saturate(160%);
 }
 
+/* no visible bar — see .commit-message-resizer */
 .git-tool-resizer {
   position: absolute;
   top: -3px;
   left: 0;
   right: 0;
   height: 6px;
-  cursor: row-resize;
+  cursor: var(--cursor-row-resize);
   z-index: 5;
-}
-
-/* a crisp, full-width 2px bar — same grip language as the other resizers */
-.git-tool-resizer::after {
-  content: "";
-  position: absolute;
-  left: 3px;
-  right: 3px;
-  top: 2px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--border);
-  transition: background 0.15s var(--ease-ui);
-}
-
-.git-tool-resizer:hover::after,
-.git-tool-resizer:active::after {
-  background: var(--accent);
 }
 
 /* 日志 tab: branch sidebar + commit graph, merged IDEA-style */
@@ -1278,33 +1250,14 @@ input[type="checkbox"]:checked::after {
   display: contents;
 }
 
+/* no visible bar — see .commit-message-resizer */
 .resizer {
   flex: none;
   width: 6px;
   margin: 0 -3px;
-  cursor: col-resize;
+  cursor: var(--cursor-col-resize);
   z-index: 5;
   position: relative;
-}
-
-/* a crisp, full-height 2px bar at an integer offset (no transform-based
- * centering, which blurs 1px lines at fractional device pixels) — same
- * grip language as .log-col-resizer/.git-tool-resizer/.commit-message-resizer */
-.resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 2px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--border);
-  transition: background 0.15s var(--ease-ui);
-}
-
-.resizer:hover::after,
-.resizer:active::after {
-  background: var(--accent);
 }
 
 /* ---------- file list (macOS sidebar look: tone separation, no border) ---------- */
@@ -1872,6 +1825,42 @@ input[type="checkbox"]:checked::after {
   min-height: 0;
 }
 
+/* which side "我的"/"对方" refer to — varies by operation (merge/cherry-pick/
+ * revert/rebase), so spell it out instead of leaving it generic */
+.conflict-legend {
+  flex: none;
+  display: flex;
+  gap: 14px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
+}
+
+.conflict-legend-mine,
+.conflict-legend-theirs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conflict-legend-mine::before,
+.conflict-legend-theirs::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.conflict-legend-mine::before {
+  background: var(--accent);
+}
+
+.conflict-legend-theirs::before {
+  background: var(--st-modified);
+}
+
 .conflict-empty {
   flex: 1;
   display: flex;
@@ -2198,6 +2187,42 @@ input[type="checkbox"]:checked::after {
   inset: 0;
 }
 
+.diff-pane .editor.has-side-labels {
+  top: 26px;
+}
+
+/* which side is "before"/"after" the change — IDEA always labels this;
+ * a plain side-by-side view with no header leaves it ambiguous */
+.diff-side-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 26px;
+  z-index: 2;
+  display: flex;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
+  border-bottom: 1px solid var(--border);
+  pointer-events: none;
+}
+
+.diff-side-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 14px;
+}
+
+.diff-side-label:first-child {
+  border-right: 1px solid var(--border);
+}
+
 /* let the frosted .diff-pane show through Monaco (which paints solid by default) */
 .monaco-editor,
 .monaco-editor .monaco-editor-background,
@@ -2252,6 +2277,85 @@ input[type="checkbox"]:checked::after {
   width: 72px;
   height: 72px;
   fill: var(--border);
+}
+
+/* GitHub-style project overview (language breakdown across the whole repo,
+ * not just what's changed) — a card inside SummaryView, next to "按文件类型"
+ * (which is scoped to the current diff). Classes are prefixed repo-summary-*
+ * since SummaryView already has its own unrelated .lang-bar/.lang-name for
+ * its per-change-file-extension rows. */
+.repo-summary-loading {
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.repo-summary-totals {
+  display: flex;
+  gap: 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-bottom: 10px;
+}
+
+.repo-summary-totals b {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.repo-summary-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--border);
+  margin-bottom: 12px;
+}
+
+.repo-summary-bar-seg {
+  flex: none;
+  height: 100%;
+}
+
+.repo-summary-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.repo-summary-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.repo-summary-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.repo-summary-lang-name {
+  flex: 1;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-summary-pct {
+  flex: none;
+  min-width: 42px;
+  text-align: right;
+}
+
+.repo-summary-lines {
+  flex: none;
+  min-width: 64px;
+  text-align: right;
 }
 
 /* diff change navigation (IDEA F7 / Shift+F7) */
@@ -2509,31 +2613,15 @@ input[type="checkbox"]:checked::after {
 /* drag-to-resize handle, overlaid on the gap before its column so it takes
  * no flex flow width of its own — keeps header columns pixel-aligned with
  * the commit rows regardless of how wide the hit area is. */
+/* no visible bar — see .commit-message-resizer */
 .log-col-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
   left: -6px;
   width: 6px;
-  cursor: col-resize;
+  cursor: var(--cursor-col-resize);
   z-index: 5;
-}
-
-.log-col-resizer::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  left: 2px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--border);
-  transition: background 0.15s var(--ease-ui);
-}
-
-.log-col-resizer:hover::after,
-.log-col-resizer:active::after {
-  background: var(--accent);
 }
 
 .commit-row {
@@ -2990,7 +3078,8 @@ input[type="checkbox"]:checked::after {
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
 }
 
-.modal input[type="text"] {
+.modal input[type="text"],
+.modal textarea.prompt-input {
   background: var(--control-bg);
   color: var(--fg);
   border: 1px solid var(--border);
@@ -3002,6 +3091,14 @@ input[type="checkbox"]:checked::after {
 
 .modal .prompt-input {
   margin: 4px 0 16px;
+}
+
+.modal .prompt-textarea {
+  box-sizing: border-box;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 120px;
 }
 
 .modal input[type="range"] {

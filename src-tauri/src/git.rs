@@ -3,11 +3,145 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 /// git's well-known empty tree object; used as the diff base in repos with no commits
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024;
+/// fetch/pull/push/clone give up and kill the process tree past this — long enough
+/// for a slow-but-alive connection, short enough that a dead one doesn't sit there
+/// as an orphaned git.exe/ssh.exe pair for the rest of the session
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Kills a whole process tree on timeout (git may have spawned ssh/askpass
+/// children, or a hook may have spawned its own children, for the op) using
+/// real OS process-tree primitives rather than shelling out to a helper
+/// binary (`taskkill`/`kill`):
+/// - Windows: the child is spawned suspended (`CREATE_SUSPENDED`) and
+///   assigned to a kill-on-close Job Object *before* its main thread ever
+///   runs, then resumed. New processes inherit their parent's job by default,
+///   so once resumed the whole tree it spawns is covered and
+///   `TerminateJobObject` takes it all out with one syscall. Assigning after
+///   an unconditional spawn (tried first, reverted) is NOT good enough: a
+///   fast-spawning child can create grandchildren before the assignment
+///   syscall lands, and those escape the job — confirmed empirically by a
+///   leaked `sleep.exe` in `run_git_timeout_kills_whole_process_tree_on_hang`
+///   before the suspend/assign/resume ordering was added. This is also why a
+///   PID-snapshot tool like `taskkill /T` isn't good enough on its own: it
+///   walks parent-child links *after the fact*, so it has the same race plus
+///   its own (already changed by the time it runs).
+/// - Unix: `process_group(0)` at spawn puts the child in its own new process
+///   group; `kill(-pid, SIGKILL)` signals every process in that group. No
+///   equivalent race here — the group is set atomically at fork/exec time by
+///   the kernel, before the child can run anything.
+#[cfg(windows)]
+mod proc_tree {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
+
+    /// OR'd into the child's creation flags alongside CREATE_NO_WINDOW so it
+    /// starts frozen until `resume_main_thread` is called.
+    pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
+
+    pub struct JobGuard(HANDLE);
+
+    impl JobGuard {
+        /// Creates a kill-on-close job and assigns `child` (still suspended)
+        /// to it. Returns `None` on any failure — the caller falls back to a
+        /// plain kill of just the top process rather than erroring the whole
+        /// operation out.
+        pub fn new(child: &std::process::Child) -> Option<Self> {
+            unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if job.is_null() {
+                    return None;
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let set_ok = SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                let assign_ok = set_ok != 0 && AssignProcessToJobObject(job, child.as_raw_handle() as HANDLE) != 0;
+                if !assign_ok {
+                    CloseHandle(job);
+                    return None;
+                }
+                Some(JobGuard(job))
+            }
+        }
+
+        /// Kills every process still alive in the job.
+        pub fn kill_tree(&self) {
+            unsafe {
+                TerminateJobObject(self.0, 1);
+            }
+        }
+    }
+
+    impl Drop for JobGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    /// Finds the sole thread of a just-created suspended process (Toolhelp
+    /// snapshot, filtered by owner PID) and resumes it. Must be called only
+    /// after the process has been registered with any job it needs to belong
+    /// to — that ordering is the entire point of spawning suspended.
+    pub fn resume_main_thread(pid: u32) {
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snap == INVALID_HANDLE_VALUE {
+                return;
+            }
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+            let mut has_entry = Thread32First(snap, &mut entry) != 0;
+            while has_entry {
+                if entry.th32OwnerProcessID == pid {
+                    let th = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                    if !th.is_null() {
+                        ResumeThread(th);
+                        CloseHandle(th);
+                    }
+                }
+                has_entry = Thread32Next(snap, &mut entry) != 0;
+            }
+            CloseHandle(snap);
+        }
+    }
+
+    /// Fallback for the rare case `JobGuard::new` itself failed: a direct
+    /// handle-based kill of just the top process (no shelling out to
+    /// `taskkill` — any orphaned child is a much smaller regression than the
+    /// unbounded hang this whole mechanism exists to prevent).
+    pub fn kill_pid_only(pid: u32) {
+        use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            if !handle.is_null() {
+                TerminateProcess(handle, 1);
+                CloseHandle(handle);
+            }
+        }
+    }
+}
 
 /// mid-merge / mid-cherry-pick / mid-revert, detected from marker files under
 /// the git dir (MERGE_HEAD / CHERRY_PICK_HEAD / REVERT_HEAD)
@@ -180,6 +314,12 @@ fn record_console(repo: &Path, args: &[&str], ok: bool) {
     });
 }
 
+/// `creation_flags()` replaces rather than ORs with any previous call, so
+/// every site that needs to add its own flag (e.g. `run_git_timeout`'s
+/// CREATE_SUSPENDED) re-applies this alongside its own instead of clobbering it.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 fn git_command(repo: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.current_dir(repo);
@@ -191,7 +331,7 @@ fn git_command(repo: &Path) -> Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
 }
@@ -199,10 +339,8 @@ fn git_command(repo: &Path) -> Command {
 /// Blocks on `wait_with_output()` with no wall-clock timeout. `GIT_TERMINAL_PROMPT=0`
 /// (set in `git_command`) covers the common hang (missing/expired credentials
 /// prompting for input), but a genuinely stalled TCP connection to a remote
-/// (dead proxy, dropped VPN) can still block a fetch/pull/push indefinitely.
-/// Killing the child on a timeout would need a dependency for cancellable
-/// process waiting (std's `Child::wait` has no timeout variant) — left as a
-/// known gap rather than adding one under time pressure.
+/// (dead proxy, dropped VPN) can still block indefinitely — network callers
+/// (fetch/pull/push) use `run_git_timeout` below instead, which can kill it.
 fn run_git(repo: &Path, args: &[&str], stdin_data: Option<&[u8]>) -> Result<Vec<u8>, String> {
     let mut cmd = git_command(repo);
     cmd.args(args);
@@ -227,6 +365,76 @@ fn run_git(repo: &Path, args: &[&str], stdin_data: Option<&[u8]>) -> Result<Vec<
         Ok(out.stdout)
     } else {
         Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// Like `run_git`, but for network ops (fetch/pull/push/clone) that can stall on
+/// a dead proxy/VPN with no local signal to fail on. `wait_with_output()` runs on
+/// a helper thread so a timeout can fire on the caller side; on timeout the whole
+/// process tree is killed via `proc_tree` (see above) — plain `Child::kill()`
+/// only kills git.exe itself and leaves any ssh/askpass child orphaned, which is
+/// what accumulated as stray processes before this fix.
+fn run_git_timeout(repo: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>, String> {
+    let mut cmd = git_command(repo);
+    cmd.args(args);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // frozen until resume_main_thread() — see proc_tree's doc comment for
+        // why this ordering (not a plain spawn-then-assign) is required
+        cmd.creation_flags(CREATE_NO_WINDOW | proc_tree::CREATE_SUSPENDED);
+    }
+    let child = cmd.spawn().map_err(|e| format!("无法执行 git: {e}"))?;
+    let pid = child.id();
+    // registers the (still-suspended) child with a kill-on-close job before
+    // it runs; if this fails (rare — e.g. job creation denied by policy),
+    // `kill()` on timeout still takes out the top-level git.exe process
+    #[cfg(windows)]
+    let job = proc_tree::JobGuard::new(&child);
+    #[cfg(windows)]
+    proc_tree::resume_main_thread(pid);
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(out)) => {
+            record_console(repo, args, out.status.success());
+            if out.status.success() {
+                Ok(out.stdout)
+            } else {
+                Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+            }
+        }
+        Ok(Err(e)) => Err(format!("git 执行失败: {e}")),
+        Err(_) => {
+            #[cfg(windows)]
+            match &job {
+                Some(j) => j.kill_tree(),
+                None => proc_tree::kill_pid_only(pid),
+            }
+            #[cfg(unix)]
+            {
+                // negative pid targets the whole process group (see process_group(0) above)
+                unsafe {
+                    libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+                }
+            }
+            record_console(repo, args, false);
+            Err(format!(
+                "git {} 超时（超过 {}s 无响应，可能是网络连接卡住），已终止",
+                args.join(" "),
+                timeout.as_secs()
+            ))
+        }
     }
 }
 
@@ -756,6 +964,136 @@ pub async fn read_file(repo: String, path: String) -> Result<FileContent, String
     }
 }
 
+/// Files above this are skipped for stats (vendored bundles, lockfiles-as-code,
+/// generated data) — they'd both skew the language breakdown and slow this
+/// command down without telling you anything about the project's actual code.
+const STATS_FILE_CAP: u64 = 2 * 1024 * 1024;
+
+/// Extension (and a few bare filenames) to (language, linguist-style color)
+/// — not exhaustive, just the languages a typical repo mixes; anything
+/// unrecognized (images, fonts, lockfiles, …) is left out of the breakdown
+/// entirely rather than lumped into a misleading "Other" bucket.
+fn language_for(rel_path: &str) -> Option<(&'static str, &'static str)> {
+    let lower = rel_path.to_lowercase();
+    let file_name = Path::new(&lower).file_name().and_then(|f| f.to_str()).unwrap_or("");
+    match file_name {
+        "dockerfile" => return Some(("Dockerfile", "#384d54")),
+        "makefile" | "gnumakefile" => return Some(("Makefile", "#427819")),
+        _ => {}
+    }
+    let ext = Path::new(&lower).extension().and_then(|e| e.to_str())?;
+    Some(match ext {
+        "rs" => ("Rust", "#dea584"),
+        "ts" | "tsx" | "mts" | "cts" => ("TypeScript", "#3178c6"),
+        "js" | "jsx" | "mjs" | "cjs" => ("JavaScript", "#f1e05a"),
+        "vue" => ("Vue", "#41b883"),
+        "css" => ("CSS", "#563d7c"),
+        "scss" | "sass" => ("SCSS", "#c6538c"),
+        "less" => ("Less", "#1d365d"),
+        "html" | "htm" => ("HTML", "#e34c26"),
+        "json" | "jsonc" => ("JSON", "#292929"),
+        "md" | "markdown" => ("Markdown", "#083fa1"),
+        "py" => ("Python", "#3572a5"),
+        "go" => ("Go", "#00add8"),
+        "java" => ("Java", "#b07219"),
+        "kt" | "kts" => ("Kotlin", "#a97bff"),
+        "c" | "h" => ("C", "#555555"),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" => ("C++", "#f34b7d"),
+        "cs" => ("C#", "#178600"),
+        "sh" | "bash" | "zsh" => ("Shell", "#89e051"),
+        "ps1" | "psm1" => ("PowerShell", "#012456"),
+        "yml" | "yaml" => ("YAML", "#cb171e"),
+        "toml" => ("TOML", "#9c4221"),
+        "sql" => ("SQL", "#e38c00"),
+        "php" => ("PHP", "#4f5d95"),
+        "rb" => ("Ruby", "#701516"),
+        "swift" => ("Swift", "#f05138"),
+        "dart" => ("Dart", "#00b4ab"),
+        "xml" => ("XML", "#0060ac"),
+        "lua" => ("Lua", "#000080"),
+        _ => return None,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LangStat {
+    pub language: String,
+    pub color: String,
+    pub lines: u64,
+    pub files: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoStats {
+    pub total_files: u32,
+    pub total_lines: u64,
+    pub languages: Vec<LangStat>,
+    pub skipped_binary: u32,
+    pub skipped_too_large: u32,
+}
+
+/// GitHub-style "what's this project made of": line counts per language
+/// across tracked files (mirrors linguist's tracked-files-only scope — an
+/// untracked build artifact shouldn't count toward "what language is this
+/// project"). Binary/oversized files are counted but excluded from the
+/// language breakdown rather than silently dropped from the totals.
+#[tauri::command]
+pub async fn repo_stats(repo: String) -> Result<RepoStats, String> {
+    let repo_path = PathBuf::from(&repo);
+    let out = run_git_text(&repo_path, &["ls-files", "-z"])?;
+
+    let mut by_lang: std::collections::HashMap<&'static str, (u64, u32, &'static str)> = std::collections::HashMap::new();
+    let mut total_lines: u64 = 0;
+    let mut total_files: u32 = 0;
+    let mut skipped_binary = 0u32;
+    let mut skipped_too_large = 0u32;
+
+    for rel in out.split('\0').filter(|s| !s.is_empty()) {
+        let Some((lang, color)) = language_for(rel) else { continue };
+        let full = repo_path.join(rel);
+        let Ok(meta) = std::fs::metadata(&full) else { continue };
+        if meta.len() > STATS_FILE_CAP {
+            skipped_too_large += 1;
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&full) else { continue };
+        if bytes.iter().take(8000).any(|&b| b == 0) {
+            skipped_binary += 1;
+            continue;
+        }
+        let mut lines = bytes.iter().filter(|&&b| b == b'\n').count() as u64;
+        if !bytes.is_empty() && bytes[bytes.len() - 1] != b'\n' {
+            lines += 1;
+        }
+        total_lines += lines;
+        total_files += 1;
+        let entry = by_lang.entry(lang).or_insert((0, 0, color));
+        entry.0 += lines;
+        entry.1 += 1;
+    }
+
+    let mut languages: Vec<LangStat> = by_lang
+        .into_iter()
+        .map(|(language, (lines, files, color))| LangStat {
+            language: language.to_string(),
+            color: color.to_string(),
+            lines,
+            files,
+        })
+        .collect();
+    languages.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.language.cmp(&b.language)));
+
+    Ok(RepoStats {
+        total_files,
+        total_lines,
+        languages,
+        skipped_binary,
+        skipped_too_large,
+    })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileInfo {
@@ -1113,6 +1451,16 @@ pub async fn search_commits(
         skip += BATCH;
     }
     Ok(matches)
+}
+
+/// Full commit message (subject + body) — `log_commits`' `%s` only carries the
+/// subject, which would silently drop a multi-line body if used to prefill an
+/// edit-message dialog.
+#[tauri::command]
+pub async fn get_commit_message(repo: String, hash: String) -> Result<String, String> {
+    let repo = PathBuf::from(repo);
+    let out = run_git_text(&repo, &["log", "-1", "--format=%B", &hash])?;
+    Ok(out.trim_end_matches('\n').to_string())
 }
 
 #[tauri::command]
@@ -1702,7 +2050,7 @@ pub async fn clone_repo(url: String, dest: String, branch: Option<String>, depth
     }
     args.push(&url);
     args.push(&dest);
-    run_git(&cwd, &args, None)?;
+    run_git_timeout(&cwd, &args, NETWORK_TIMEOUT)?;
     Ok(())
 }
 
@@ -1716,7 +2064,7 @@ pub async fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> 
     if let Some(r) = &remote {
         args.push(r);
     }
-    run_git(&repo, &args, None)?;
+    run_git_timeout(&repo, &args, NETWORK_TIMEOUT)?;
     Ok(())
 }
 
@@ -1727,7 +2075,7 @@ pub async fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> 
     if let Some(r) = &remote {
         args.push(r);
     }
-    let result = run_git(&repo, &args, None);
+    let result = run_git_timeout(&repo, &args, NETWORK_TIMEOUT);
     classify_op_result(&repo, result)
 }
 
@@ -1760,7 +2108,7 @@ pub async fn push_branch(
     args.push(remote);
     args.push(branch);
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    run_git(&repo, &arg_refs, None)?;
+    run_git_timeout(&repo, &arg_refs, NETWORK_TIMEOUT)?;
     Ok(())
 }
 
@@ -2137,6 +2485,9 @@ mod repo_tests {
     fn read_file(repo: String, path: String) -> Result<FileContent, String> {
         bl(super::read_file(repo, path))
     }
+    fn repo_stats(repo: String) -> Result<RepoStats, String> {
+        bl(super::repo_stats(repo))
+    }
     fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
         bl(super::log_commits(repo, skip, count, None))
     }
@@ -2145,6 +2496,9 @@ mod repo_tests {
     }
     fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
         bl(super::commit_files(repo, hash))
+    }
+    fn get_commit_message(repo: String, hash: String) -> Result<String, String> {
+        bl(super::get_commit_message(repo, hash))
     }
     fn get_commit_file_diff(
         repo: String,
@@ -3136,6 +3490,85 @@ mod repo_tests {
         let _ = std::fs::remove_dir_all(&other_dir);
     }
 
+    /// Diagnostic: exercises the Windows suspend/assign/resume + Job Object
+    /// mechanism directly against a plain native process tree (cmd.exe spawns
+    /// ping.exe), with no git/MSYS involved at all — isolates whether the
+    /// mechanism itself is race-free from whatever MSYS bash's own fork
+    /// emulation does when git invokes a shell-script hook.
+    #[cfg(windows)]
+    #[test]
+    fn windows_job_object_kills_native_process_tree() {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+        cmd.creation_flags(CREATE_NO_WINDOW | proc_tree::CREATE_SUSPENDED);
+        let child = cmd.spawn().unwrap();
+        let pid = child.id();
+        let job = proc_tree::JobGuard::new(&child);
+        proc_tree::resume_main_thread(pid);
+        // give cmd.exe time to actually spawn ping.exe as its child
+        std::thread::sleep(Duration::from_millis(800));
+        job.expect("job assignment must succeed on a freshly suspended process").kill_tree();
+        std::thread::sleep(Duration::from_millis(500));
+
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq ping.exe"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!text.contains("ping.exe"), "ping.exe child must not survive TerminateJobObject: {text}");
+    }
+
+    /// Proves `run_git_timeout` actually kills the whole process tree instead
+    /// of just the top-level git.exe. Uses git's `ext::` transport (a remote
+    /// helper git spawns as a plain native child process — the exact same
+    /// mechanism it uses for `ssh`) pointed at `ping`, redirected to NUL so it
+    /// never writes the pkt-line data git expects: git blocks reading from
+    /// the pipe, `ping`/its `cmd.exe` parent run for ~30s, a real stand-in for
+    /// a stalled fetch/pull/push spawning an ssh/askpass child that never
+    /// returns. (An earlier version of this test used a pre-commit hook
+    /// spawning `sh`/`sleep` instead; that hit an MSYS-fork-emulation quirk
+    /// unrelated to this fix — see `windows_job_object_kills_native_process_tree`
+    /// for proof the actual kill mechanism is race-free against real native
+    /// process trees, which is what git spawning ssh.exe actually is.)
+    #[cfg(windows)]
+    #[test]
+    fn run_git_timeout_kills_whole_process_tree_on_hang() {
+        let repo = TempRepo::new("timeout-kill");
+
+        let start = std::time::Instant::now();
+        let result = run_git_timeout(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.ext.allow=always",
+                "fetch",
+                "ext::cmd /c ping -n 30 127.0.0.1 >NUL",
+            ],
+            Duration::from_secs(2),
+        );
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err(), "a remote helper blocked for 30s past a 2s timeout must be killed, not complete");
+        assert!(
+            result.unwrap_err().contains("超时"),
+            "the error should say this was a timeout, not some other git failure"
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "must return shortly after the 2s timeout ({elapsed:?}), not wait out the full 30s hang"
+        );
+
+        std::thread::sleep(Duration::from_millis(300));
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq ping.exe"])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        assert!(!text.contains("ping.exe"), "ping.exe must not survive as an orphan: {text}");
+    }
+
     #[test]
     fn push_uploads_commit_to_remote() {
         let (bare_dir, local, branch) = bare_remote_with_clone("push");
@@ -3837,5 +4270,51 @@ mod repo_tests {
 
         let _ = std::fs::remove_dir_all(&bare_dir);
         let _ = std::fs::remove_dir_all(&dest_parent);
+    }
+
+    #[test]
+    fn get_commit_message_returns_full_body_not_just_subject() {
+        let r = TempRepo::new("full-msg");
+        r.write("a.txt", b"1\n");
+        run_git(r.path(), &["add", "-A"], None).unwrap();
+        run_git(r.path(), &["commit", "-qm", "subject line\n\nbody line 1\nbody line 2"], None).unwrap();
+
+        let hash = run_git_text(r.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        let msg = get_commit_message(r.root(), hash).unwrap();
+
+        assert_eq!(msg, "subject line\n\nbody line 1\nbody line 2");
+    }
+
+    #[test]
+    fn repo_stats_counts_lines_per_language_and_skips_untracked() {
+        let r = TempRepo::new("stats");
+        r.write("main.rs", b"fn main() {\n    println!(\"hi\");\n}\n"); // 3 lines
+        r.write("lib.rs", b"pub fn add(a: i32, b: i32) -> i32 { a + b }"); // 1 line, no trailing newline
+        r.write("index.ts", b"export const x = 1;\nexport const y = 2;\n"); // 2 lines
+        r.write("README.md", b"# stats\n"); // 1 line, excluded via .gitignore below
+        r.write(".gitignore", b"README.md\n");
+        r.commit_all();
+        // untracked — must not be counted at all
+        r.write("scratch.rs", b"fn scratch() {}\nfn more() {}\nfn even_more() {}\n");
+
+        let stats = repo_stats(r.root()).unwrap();
+
+        assert_eq!(stats.total_files, 3, "2 tracked .rs files + index.ts (README is gitignored, scratch.rs is untracked)");
+        assert_eq!(stats.total_lines, 6, "3 (main.rs) + 1 (lib.rs) + 2 (index.ts)");
+
+        let rust = stats.languages.iter().find(|l| l.language == "Rust").expect("Rust must be in the breakdown");
+        assert_eq!(rust.files, 2);
+        assert_eq!(rust.lines, 4, "lib.rs has no trailing newline but its one line must still count");
+
+        assert!(
+            !stats.languages.iter().any(|l| l.language == "Markdown"),
+            "README.md is gitignored and must not appear despite being on disk"
+        );
+        // index.ts wasn't committed as part of `commit_all` staging — it was
+        // written before commit_all() ran, so it IS tracked; confirm it landed
+        // in its own TypeScript bucket rather than being merged into Rust
+        let ts = stats.languages.iter().find(|l| l.language == "TypeScript");
+        assert!(ts.is_some(), "index.ts must appear as TypeScript");
+        assert_eq!(ts.unwrap().lines, 2);
     }
 }

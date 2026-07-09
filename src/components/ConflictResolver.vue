@@ -123,6 +123,24 @@ const opLabel = computed(() => {
   }
 });
 
+// which side "我的"/"对方" actually refer to — varies by operation, unlike
+// the diff view's always-the-same 修改前/修改后
+const mineLabel = computed(() => `我的（当前分支${repo.repo?.branch ? ` ${repo.repo.branch}` : ""}）`);
+const theirsLabel = computed(() => {
+  switch (repo.repo?.operation) {
+    case "merge":
+      return "对方（被合并进来的分支）";
+    case "cherryPick":
+      return "对方（被拣选的提交）";
+    case "revert":
+      return "对方（回滚产生的改动）";
+    case "rebase":
+      return "对方（变基重放的提交）";
+    default:
+      return "对方";
+  }
+});
+
 async function onContinue() {
   if (conflicted.value.length) {
     toast("还有未解决的冲突", "error");
@@ -154,6 +172,10 @@ async function onAbort() {
     </div>
     <div class="conflict-main">
       <template v-if="selectedPath && sides">
+        <div class="conflict-legend">
+          <span class="conflict-legend-mine">{{ mineLabel }}</span>
+          <span class="conflict-legend-theirs">{{ theirsLabel }}</span>
+        </div>
         <div v-if="sides.tooLarge" class="conflict-empty">文件过大，无法在此预览/解决，请在外部工具中处理后刷新。</div>
         <div v-else-if="!isTextConflict" class="conflict-binary">
           <p v-if="sides.isBinary">这是一个二进制文件冲突，无法在编辑器中合并。</p>

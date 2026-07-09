@@ -132,6 +132,21 @@ export interface ConsoleEntry {
   atMs: number;
 }
 
+export interface LangStat {
+  language: string;
+  color: string;
+  lines: number;
+  files: number;
+}
+
+export interface RepoStats {
+  totalFiles: number;
+  totalLines: number;
+  languages: LangStat[];
+  skippedBinary: number;
+  skippedTooLarge: number;
+}
+
 export const api = {
   openRepo: (path: string) => invoke<RepoInfo>("open_repo", { path }),
   getStatus: (repo: string) => invoke<FileStatus[]>("get_status", { repo }),
@@ -199,11 +214,13 @@ export const api = {
   listFiles: (repo: string, showIgnored: boolean) =>
     invoke<string[]>("list_files", { repo, showIgnored }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
+  repoStats: (repo: string) => invoke<RepoStats>("repo_stats", { repo }),
   logCommits: (repo: string, skip: number, count: number, branch: string | null = null) =>
     invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch }),
   searchCommits: (repo: string, branch: string | null, query: string, maxResults = 200) =>
     invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
+  getCommitMessage: (repo: string, hash: string) => invoke<string>("get_commit_message", { repo, hash }),
   getCommitFileDiff: (repo: string, hash: string, f: FileStatus) =>
     invoke<FileDiff>("get_commit_file_diff", {
       repo,

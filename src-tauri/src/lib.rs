@@ -10,7 +10,7 @@ static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 async fn new_window(app: tauri::AppHandle) -> Result<(), String> {
     let label = format!("repo-{}", WINDOW_SEQ.fetch_add(1, Ordering::Relaxed));
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::default())
-        .title("ai-diff")
+        .title("GitPrism")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 600.0)
         .visible(false) // the frontend shows it once the theme is applied
@@ -37,7 +37,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&show, &quit])?;
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().expect("app icon").clone())
-        .tooltip("ai-diff")
+        .tooltip("GitPrism")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -125,8 +125,10 @@ pub fn run() {
             git::abort_operation,
             git::list_files,
             git::read_file,
+            git::repo_stats,
             git::log_commits,
             git::commit_files,
+            git::get_commit_message,
             git::get_commit_file_diff,
             git::auto_open_path,
             git::search_text,

@@ -1,4 +1,4 @@
-# ai-diff
+# GitPrism
 
 跨平台 Git 工作树更改查看器，专为 review AI 编码代理产生的改动而做。
 打开一个 git 仓库即可看到所有未提交更改（HEAD vs 工作树），逐文件查看

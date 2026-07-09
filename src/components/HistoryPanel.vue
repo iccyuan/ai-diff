@@ -9,7 +9,7 @@ import { resetDialog } from "../lib/resetDialog";
 import { toast } from "../lib/toast";
 import { buildCommitGraph, graphWidth, type GraphRow } from "../lib/commitGraph";
 import Spinner from "./Spinner.vue";
-import type { BranchInfo, CommitInfo, FileStatus } from "../lib/api";
+import { api, type BranchInfo, type CommitInfo, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
 const settings = useSettingsStore();
@@ -224,6 +224,24 @@ async function onResetTo() {
 // plain soft reset — anything else needs cherry-pick/reset-to-here instead
 function isCurrentHead(c: CommitInfo): boolean {
   return !!repo.repo?.branch && c.refs.includes(repo.repo.branch);
+}
+
+// only HEAD can have its message safely reworded via a plain `commit --amend`
+// — anything further back needs an interactive rebase, which isn't supported
+async function onEditCommitMessage() {
+  const c = menu.value?.commit;
+  closeMenu();
+  if (!c || !repo.repo || !isCurrentHead(c)) return;
+  let full = c.subject;
+  try {
+    full = await api.getCommitMessage(repo.repo.root, c.hash);
+  } catch (e) {
+    toast(String(e), "error");
+    return;
+  }
+  const next = await promptDialog("编辑提交消息", "", full, { multiline: true });
+  if (next == null || next === full) return;
+  await repo.createCommit(next, true);
 }
 
 async function onUndoCommit() {
@@ -532,6 +550,7 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
       >
         <button @click="onCheckoutRevision">检出此提交</button>
         <button @click="onCreateBranchFromCommit">从此创建分支…</button>
+        <button :disabled="!isCurrentHead(menu.commit)" @click="onEditCommitMessage">编辑提交消息…</button>
         <button :disabled="menu.commit.parents.length !== 1 || !isCurrentHead(menu.commit)" @click="onUndoCommit">撤销上一次提交</button>
         <div class="ctx-sep"></div>
         <button :disabled="menu.commit.parents.length > 1" @click="onCherryPick">Cherry-pick</button>

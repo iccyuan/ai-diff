@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useRepoStore } from "../stores/repo";
 import { fileIcon } from "../lib/fileIcons";
 import type { ChangeKind, FileStatus } from "../lib/api";
+import RepoSummary from "./RepoSummary.vue";
 
 const repo = useRepoStore();
 
@@ -107,21 +108,28 @@ function open(f: FileStatus) {
             </span>
           </div>
         </section>
+
+        <RepoSummary />
       </div>
     </template>
 
-    <div v-else class="sum-empty">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path
-          d="M20 6 9 17l-5-5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-      <span>工作区干净，没有未提交的更改</span>
-    </div>
+    <template v-else>
+      <div class="sum-empty">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M20 6 9 17l-5-5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <span>工作区干净，没有未提交的更改</span>
+      </div>
+      <div class="sum-cols">
+        <RepoSummary />
+      </div>
+    </template>
   </div>
 </template>

@@ -425,16 +425,39 @@ onMounted(() => {
     scrollBeyondLastLine: false,
     renderOverviewRuler: false,
     scrollbar: {
+      vertical: "visible",
+      horizontal: "visible",
       verticalScrollbarSize: 10,
       horizontalScrollbarSize: 10,
       useShadows: false,
     },
+    // no wrap on either side — rely on the horizontal scrollbar (kept
+    // visible below) to reveal long lines, matching IDEA's diff viewer;
+    // wrapping used to be enabled here but only reliably applied to one
+    // side, producing a left/right mismatch — off is simpler to keep in sync
+    wordWrap: "off",
     fontFamily: settings.editorFontFamily,
     fontSize: settings.editorFontSize,
   });
   // gutter revert icons live in the modified editor's glyph margin
   const mod = editor.getModifiedEditor();
-  mod.updateOptions({ glyphMargin: true });
+  const orig = editor.getOriginalEditor();
+  // the diff editor's shared constructor options don't always propagate
+  // identically to both sub-editors (seen as the modified/right pane
+  // silently missing its horizontal scrollbar) — set them explicitly on
+  // both sides so original/modified never drift out of sync
+  const sideOptions = {
+    wordWrap: "off" as const,
+    scrollbar: {
+      vertical: "visible" as const,
+      horizontal: "visible" as const,
+      verticalScrollbarSize: 10,
+      horizontalScrollbarSize: 10,
+      useShadows: false,
+    },
+  };
+  orig.updateOptions(sideOptions);
+  mod.updateOptions({ ...sideOptions, glyphMargin: true });
   addEclipseActions(mod as monaco.editor.IStandaloneCodeEditor);
   addEclipseActions(editor.getOriginalEditor() as monaco.editor.IStandaloneCodeEditor);
   mod.onMouseDown((e) => {
@@ -507,7 +530,16 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="diff-pane">
-    <div v-show="!contentMode && !isImageView" ref="container" class="editor"></div>
+    <div v-if="!contentMode && !isImageView && settings.renderSideBySide" class="diff-side-labels">
+      <span class="diff-side-label">修改前</span>
+      <span class="diff-side-label">修改后</span>
+    </div>
+    <div
+      v-show="!contentMode && !isImageView"
+      ref="container"
+      class="editor"
+      :class="{ 'has-side-labels': settings.renderSideBySide }"
+    ></div>
     <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor"></div>
     <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
 
