@@ -213,7 +213,7 @@ function onOpenSettings() {
       <div v-if="openMenuId === 'view'" ref="menuEl" class="recent-menu" :style="{ left: menuPos.x + 'px', top: menuPos.y + 'px' }">
         <button class="recent-item" :disabled="!repo.repo" @click="onSummary">
           <span class="recent-icon">📊</span>
-          <span class="recent-text"><span class="recent-name">改动摘要</span></span>
+          <span class="recent-text"><span class="recent-name">摘要</span></span>
         </button>
         <button class="recent-item" :disabled="!repo.repo" @click="onRefresh">
           <span class="recent-icon">🔄</span>

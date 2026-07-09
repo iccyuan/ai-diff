@@ -102,6 +102,17 @@ function basename(path: string): string {
   return path.split("/").pop()!;
 }
 
+/** live-updates a "正在 fetch/pull…" toast with git's own --progress lines
+ *  (received objects, compression, …) as they arrive, instead of leaving it
+ *  static until the whole operation finishes. Caller must invoke the
+ *  returned unlisten fn once the operation settles. */
+async function listenGitProgress(root: string, toastId: number) {
+  return listen<[string, string]>("git-progress", (e) => {
+    const [evRoot, line] = e.payload;
+    if (evRoot === root) updateToast(toastId, line);
+  });
+}
+
 export const useRepoStore = defineStore("repo", {
   state: () => ({
     workspaces: [] as Workspace[],
@@ -676,12 +687,14 @@ export const useRepoStore = defineStore("repo", {
       if (!w) return;
       w.busyOp = "fetch";
       const id = toast("正在 fetch…", "progress");
+      const unlisten = await listenGitProgress(w.repo.root, id);
       try {
         await api.fetchRemote(w.repo.root, remote, prune);
         updateToast(id, "fetch 完成", "ok");
       } catch (e) {
         updateToast(id, String(e), "error");
       } finally {
+        unlisten();
         w.busyOp = null;
         await this.refreshWs(w);
       }
@@ -692,12 +705,14 @@ export const useRepoStore = defineStore("repo", {
       const useRebase = rebase ?? (useSettingsStore().pullStrategy === "rebase");
       w.busyOp = "pull";
       const id = toast("正在 pull…", "progress");
+      const unlisten = await listenGitProgress(w.repo.root, id);
       try {
         const outcome = await api.pullBranch(w.repo.root, remote, useRebase);
         updateToast(id, outcome === "applied" ? "pull 完成" : "pull 产生冲突，需要解决", outcome === "applied" ? "ok" : "error");
       } catch (e) {
         updateToast(id, String(e), "error");
       } finally {
+        unlisten();
         w.busyOp = null;
         await this.refreshWs(w);
       }

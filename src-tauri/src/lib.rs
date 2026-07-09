@@ -125,6 +125,7 @@ pub fn run() {
             git::abort_operation,
             git::list_files,
             git::read_file,
+            git::write_file,
             git::repo_stats,
             git::log_commits,
             git::commit_files,

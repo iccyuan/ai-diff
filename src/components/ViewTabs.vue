@@ -224,8 +224,8 @@ function onStripPointerDown(e: PointerEvent) {
       <div v-if="menu" ref="menuEl" class="ctx-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }" @contextmenu.prevent>
         <button @click="run((id) => repo.closeTab(id))">关闭</button>
         <button :disabled="!hasOthers()" @click="run((id) => repo.closeOtherTabs(id))">关闭其他</button>
-        <button :disabled="!hasLeft()" @click="run((id) => repo.closeLeftTabs(id))">关闭左边的</button>
-        <button :disabled="!hasRight()" @click="run((id) => repo.closeRightTabs(id))">关闭右边的</button>
+        <button :disabled="!hasLeft()" @click="run((id) => repo.closeLeftTabs(id))">关闭左边</button>
+        <button :disabled="!hasRight()" @click="run((id) => repo.closeRightTabs(id))">关闭右边</button>
         <div class="ctx-sep"></div>
         <button @click="run(() => repo.closeAllTabs())">全部关闭</button>
       </div>

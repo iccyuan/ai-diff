@@ -39,6 +39,32 @@ const vectorCurrent = computed(() => vectorDataUrl(repo.selectedPath ?? "", repo
 const isImageView = computed(() => isRasterImage.value || (isVectorImage.value && vecPreviewOn.value));
 const previewData = computed<ImageDiff | null>(() => (isRasterImage.value ? imageData.value : null));
 
+// ----- 全部文件 mode: the single-file content view is a live working-tree
+// file, so (unlike the diff view, which compares two fixed states) it's
+// editable. Known limitation: switching to a different file while dirty
+// discards the in-progress edit — there's no per-path draft cache yet, so
+// the dirty indicator + beforeunload guard are the only safety nets. -----
+const contentDirty = ref(false);
+let savingContent = false;
+async function saveContent() {
+  if (!contentDirty.value || savingContent || !repo.repo || !repo.selectedPath || !plainEditor) return;
+  savingContent = true;
+  try {
+    await api.writeFile(repo.repo.root, repo.selectedPath, plainEditor.getValue());
+    contentDirty.value = false;
+    toast(`已保存 ${repo.selectedPath}`, "ok");
+    if (repo.ws) await repo.refreshWs(repo.ws);
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    savingContent = false;
+  }
+}
+function onBeforeUnloadWarnUnsaved(e: BeforeUnloadEvent) {
+  if (!contentDirty.value) return;
+  e.preventDefault();
+}
+
 // ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
 const navList = ref<number[]>([]);
 const navIdx = ref(-1);
@@ -279,6 +305,7 @@ function clearView() {
   plainEditor?.setModel(null);
   for (const m of models) m.dispose();
   models = [];
+  contentDirty.value = false;
 }
 
 function renderContent() {
@@ -286,21 +313,41 @@ function renderContent() {
   if (!c || c.content == null || !repo.selectedPath) return;
   if (!plainEditor && plainContainer.value) {
     plainEditor = monaco.editor.create(plainContainer.value, {
-      readOnly: true,
+      // 全部文件 mode shows the live working-tree file, so — unlike the diff
+      // view, which compares two fixed states — it's editable
+      readOnly: false,
       cursorBlinking: "solid", // we blink the caret ourselves in CSS (see .cursor rule)
       automaticLayout: true,
       minimap: { enabled: false },
       scrollBeyondLastLine: false,
-      scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
+      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
       fontFamily: settings.editorFontFamily,
       fontSize: settings.editorFontSize,
+      // Monaco's unset default computes a looser line height than feels
+      // right next to the rest of this app's compact UI
+      lineHeight: Math.round(settings.editorFontSize * 1.4),
+      // Monaco's default (10px) gutter-to-code gap reads as a wide empty
+      // column next to the line numbers; a tighter gap matches the rest of
+      // this app's compact spacing
+      lineDecorationsWidth: 4,
+      lineNumbersMinChars: 4,
     });
     addEclipseActions(plainEditor);
+    plainEditor.addAction({
+      id: "save-file",
+      label: "保存文件",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: () => saveContent(),
+    });
   }
   if (!plainEditor) return;
   const model = monaco.editor.createModel(c.content, languageForPath(repo.selectedPath));
   models = [model];
   plainEditor.setModel(model);
+  contentDirty.value = false;
+  model.onDidChangeContent(() => {
+    contentDirty.value = true;
+  });
   if (repo.pendingRevealLine) mdPreviewOn.value = false;
   revealPendingLine(plainEditor);
 }
@@ -413,6 +460,7 @@ async function onStageCurrentHunk() {
 
 onMounted(() => {
   window.addEventListener("keyup", onGlobalKeyUp);
+  window.addEventListener("beforeunload", onBeforeUnloadWarnUnsaved);
   editor = monaco.editor.createDiffEditor(container.value!, {
     readOnly: true,
     originalEditable: false,
@@ -427,8 +475,8 @@ onMounted(() => {
     scrollbar: {
       vertical: "visible",
       horizontal: "visible",
-      verticalScrollbarSize: 10,
-      horizontalScrollbarSize: 10,
+      verticalScrollbarSize: 8,
+      horizontalScrollbarSize: 8,
       useShadows: false,
     },
     // no wrap on either side — rely on the horizontal scrollbar (kept
@@ -438,6 +486,9 @@ onMounted(() => {
     wordWrap: "off",
     fontFamily: settings.editorFontFamily,
     fontSize: settings.editorFontSize,
+    lineHeight: Math.round(settings.editorFontSize * 1.4),
+    lineDecorationsWidth: 4,
+    lineNumbersMinChars: 4,
   });
   // gutter revert icons live in the modified editor's glyph margin
   const mod = editor.getModifiedEditor();
@@ -448,11 +499,14 @@ onMounted(() => {
   // both sides so original/modified never drift out of sync
   const sideOptions = {
     wordWrap: "off" as const,
+    lineHeight: Math.round(settings.editorFontSize * 1.4),
+    lineDecorationsWidth: 4,
+    lineNumbersMinChars: 4,
     scrollbar: {
       vertical: "visible" as const,
       horizontal: "visible" as const,
-      verticalScrollbarSize: 10,
-      horizontalScrollbarSize: 10,
+      verticalScrollbarSize: 8,
+      horizontalScrollbarSize: 8,
       useShadows: false,
     },
   };
@@ -510,8 +564,11 @@ watch(
 watch(
   () => [settings.editorFontFamily, settings.editorFontSize] as const,
   ([family, size]) => {
-    editor?.updateOptions({ fontFamily: family, fontSize: size });
-    plainEditor?.updateOptions({ fontFamily: family, fontSize: size });
+    const lineHeight = Math.round(size * 1.4);
+    editor?.updateOptions({ fontFamily: family, fontSize: size, lineHeight });
+    editor?.getOriginalEditor().updateOptions({ fontFamily: family, fontSize: size, lineHeight });
+    editor?.getModifiedEditor().updateOptions({ fontFamily: family, fontSize: size, lineHeight });
+    plainEditor?.updateOptions({ fontFamily: family, fontSize: size, lineHeight });
     // glyph widths must be re-measured once the newly selected webfont is in
     document.fonts?.ready.then(() => monaco.editor.remeasureFonts());
   },
@@ -519,6 +576,7 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener("keyup", onGlobalKeyUp);
+  window.removeEventListener("beforeunload", onBeforeUnloadWarnUnsaved);
   ctrlLinkClearers.clear();
   clearView();
   editor?.dispose();
@@ -530,7 +588,10 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="diff-pane">
-    <div v-if="!contentMode && !isImageView && settings.renderSideBySide" class="diff-side-labels">
+    <div
+      v-if="!contentMode && !isImageView && settings.renderSideBySide && (repo.selectedPath || repo.selectedCommitPath)"
+      class="diff-side-labels"
+    >
       <span class="diff-side-label">修改前</span>
       <span class="diff-side-label">修改后</span>
     </div>
@@ -538,7 +599,7 @@ onBeforeUnmount(() => {
       v-show="!contentMode && !isImageView"
       ref="container"
       class="editor"
-      :class="{ 'has-side-labels': settings.renderSideBySide }"
+      :class="{ 'has-side-labels': settings.renderSideBySide && (repo.selectedPath || repo.selectedCommitPath) }"
     ></div>
     <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor"></div>
     <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
@@ -589,6 +650,11 @@ onBeforeUnmount(() => {
     <div v-if="isVectorImage" class="md-toggle">
       <button :class="{ active: vecPreviewOn }" @click="vecPreviewOn = true">预览</button>
       <button :class="{ active: !vecPreviewOn }" @click="vecPreviewOn = false">源码</button>
+    </div>
+    <div v-if="contentMode && !isImageView && contentDirty" class="content-save-bar">
+      <span class="content-dirty-dot" title="有未保存的更改"></span>
+      <span>未保存</span>
+      <button class="btn primary" @click="saveContent">保存 (Ctrl+S)</button>
     </div>
     <div v-if="overlayText" class="overlay">
       <Spinner v-if="repo.loadingDiff" :size="28" />

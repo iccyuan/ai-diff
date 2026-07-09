@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use tauri::Emitter;
 
 /// git's well-known empty tree object; used as the diff base in repos with no commits
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -441,6 +442,113 @@ fn run_git_timeout(repo: &Path, args: &[&str], timeout: Duration) -> Result<Vec<
 fn run_git_text(repo: &Path, args: &[&str]) -> Result<String, String> {
     let bytes = run_git(repo, args, None)?;
     String::from_utf8(bytes).map_err(|_| "git 输出不是有效的 UTF-8".to_string())
+}
+
+/// Like `run_git_timeout`, but for fetch/pull specifically: streams git's own
+/// `--progress` output (received objects, compression, …) to the frontend as
+/// it happens instead of leaving the UI showing a static "正在 fetch…" until
+/// the whole operation finishes. Git only writes progress to stderr when it
+/// thinks it's talking to a terminal; since our stderr is a pipe, callers
+/// must pass `--progress` explicitly or git silently omits it.
+///
+/// Git's progress lines use `\r` to redraw the same line (not `\n`), so a
+/// dedicated reader thread splits on either byte rather than treating stderr
+/// as normal line-oriented output. That thread also accumulates the full
+/// text so a failure still gets a real error message instead of losing it
+/// to the progress stream.
+///
+/// Takes a plain callback instead of a `tauri::Window` directly so the git
+/// logic stays testable without a running Tauri app — the real command
+/// wraps a window-emitting closure around it (see `fetch_remote`).
+fn run_git_progress<F>(repo: &Path, args: &[&str], timeout: Duration, on_progress: F) -> Result<(), String>
+where
+    F: Fn(&str) + Send + 'static,
+{
+    let mut cmd = git_command(repo);
+    cmd.args(args);
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped()).stdin(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW | proc_tree::CREATE_SUSPENDED);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("无法执行 git: {e}"))?;
+    let pid = child.id();
+    #[cfg(windows)]
+    let job = proc_tree::JobGuard::new(&child);
+    #[cfg(windows)]
+    proc_tree::resume_main_thread(pid);
+
+    let mut stderr = child.stderr.take().ok_or("无法读取 git stderr")?;
+    let full_stderr = Arc::new(Mutex::new(String::new()));
+    let reader_stderr = full_stderr.clone();
+    std::thread::spawn(move || {
+        let mut line = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            match stderr.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if byte[0] == b'\r' || byte[0] == b'\n' {
+                        if !line.is_empty() {
+                            let text = String::from_utf8_lossy(&line).trim().to_string();
+                            line.clear();
+                            if !text.is_empty() {
+                                if let Ok(mut acc) = reader_stderr.lock() {
+                                    acc.push_str(&text);
+                                    acc.push('\n');
+                                }
+                                on_progress(&text);
+                            }
+                        }
+                    } else {
+                        line.push(byte[0]);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait());
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(status)) => {
+            record_console(repo, args, status.success());
+            if status.success() {
+                Ok(())
+            } else {
+                let msg = full_stderr.lock().map(|s| s.trim().to_string()).unwrap_or_default();
+                Err(if msg.is_empty() { "git 命令失败".to_string() } else { msg })
+            }
+        }
+        Ok(Err(e)) => Err(format!("git 执行失败: {e}")),
+        Err(_) => {
+            #[cfg(windows)]
+            match &job {
+                Some(j) => j.kill_tree(),
+                None => proc_tree::kill_pid_only(pid),
+            }
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(pid as libc::pid_t), libc::SIGKILL);
+            }
+            record_console(repo, args, false);
+            Err(format!(
+                "git {} 超时（超过 {}s 无响应，可能是网络连接卡住），已终止",
+                args.join(" "),
+                timeout.as_secs()
+            ))
+        }
+    }
 }
 
 /// "HEAD" if the repo has at least one commit, otherwise the empty-tree hash,
@@ -962,6 +1070,15 @@ pub async fn read_file(repo: String, path: String) -> Result<FileContent, String
             too_large: false,
         }),
     }
+}
+
+/// Saves the working-tree file's full text content (全部文件 mode's single-file
+/// editor) — a plain overwrite, not a git operation; `list_files`/`get_status`
+/// picks up the resulting modification the same as an edit made outside the app.
+#[tauri::command]
+pub async fn write_file(repo: String, path: String, content: String) -> Result<(), String> {
+    let full = PathBuf::from(&repo).join(&path);
+    std::fs::write(&full, content).map_err(|e| format!("无法保存 {path}: {e}"))
 }
 
 /// Files above this are skipped for stats (vendored bundles, lockfiles-as-code,
@@ -2055,27 +2172,34 @@ pub async fn clone_repo(url: String, dest: String, branch: Option<String>, depth
 }
 
 #[tauri::command]
-pub async fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> Result<(), String> {
+pub async fn fetch_remote(window: tauri::Window, repo: String, remote: Option<String>, prune: bool) -> Result<(), String> {
     let repo = PathBuf::from(repo);
-    let mut args = vec!["fetch"];
+    let mut args = vec!["fetch", "--progress"];
     if prune {
         args.push("--prune");
     }
     if let Some(r) = &remote {
         args.push(r);
     }
-    run_git_timeout(&repo, &args, NETWORK_TIMEOUT)?;
+    let root = repo.to_string_lossy().into_owned();
+    run_git_progress(&repo, &args, NETWORK_TIMEOUT, move |line| {
+        let _ = window.emit("git-progress", (root.clone(), line));
+    })?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
+pub async fn pull_branch(window: tauri::Window, repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
     let repo = PathBuf::from(repo);
-    let mut args = vec!["pull", if rebase { "--rebase" } else { "--no-rebase" }];
+    let mut args = vec!["pull", "--progress", if rebase { "--rebase" } else { "--no-rebase" }];
     if let Some(r) = &remote {
         args.push(r);
     }
-    let result = run_git_timeout(&repo, &args, NETWORK_TIMEOUT);
+    let root = repo.to_string_lossy().into_owned();
+    let result = run_git_progress(&repo, &args, NETWORK_TIMEOUT, move |line| {
+        let _ = window.emit("git-progress", (root.clone(), line));
+    })
+    .map(|_| Vec::new());
     classify_op_result(&repo, result)
 }
 
@@ -2485,6 +2609,9 @@ mod repo_tests {
     fn read_file(repo: String, path: String) -> Result<FileContent, String> {
         bl(super::read_file(repo, path))
     }
+    fn write_file(repo: String, path: String, content: String) -> Result<(), String> {
+        bl(super::write_file(repo, path, content))
+    }
     fn repo_stats(repo: String) -> Result<RepoStats, String> {
         bl(super::repo_stats(repo))
     }
@@ -2567,14 +2694,33 @@ mod repo_tests {
     fn list_remotes(repo: String) -> Result<Vec<RemoteInfo>, String> {
         bl(super::list_remotes(repo))
     }
+    // fetch_remote/pull_branch take a `tauri::Window` (for progress events)
+    // that can't be constructed outside a running app, so these test-only
+    // wrappers call `run_git_progress` directly with a no-op progress
+    // callback instead of going through the real `#[tauri::command]` fns —
+    // same git args, just without the window plumbing.
     fn fetch_remote(repo: String, remote: Option<String>, prune: bool) -> Result<(), String> {
-        bl(super::fetch_remote(repo, remote, prune))
+        let repo = PathBuf::from(repo);
+        let mut args = vec!["fetch", "--progress"];
+        if prune {
+            args.push("--prune");
+        }
+        if let Some(r) = &remote {
+            args.push(r);
+        }
+        run_git_progress(&repo, &args, NETWORK_TIMEOUT, |_| {})
     }
     fn clone_repo(url: String, dest: String, branch: Option<String>, depth: Option<u32>) -> Result<(), String> {
         bl(super::clone_repo(url, dest, branch, depth))
     }
     fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
-        bl(super::pull_branch(repo, remote, rebase))
+        let repo = PathBuf::from(repo);
+        let mut args = vec!["pull", "--progress", if rebase { "--rebase" } else { "--no-rebase" }];
+        if let Some(r) = &remote {
+            args.push(r);
+        }
+        let result = run_git_progress(&repo, &args, NETWORK_TIMEOUT, |_| {}).map(|_| Vec::new());
+        classify_op_result(&repo, result)
     }
     fn drop_commit(repo: String, hash: String) -> Result<OpOutcome, String> {
         bl(super::drop_commit(repo, hash))
@@ -4270,6 +4416,22 @@ mod repo_tests {
 
         let _ = std::fs::remove_dir_all(&bare_dir);
         let _ = std::fs::remove_dir_all(&dest_parent);
+    }
+
+    #[test]
+    fn write_file_overwrites_and_shows_as_modified() {
+        let r = TempRepo::new("write-file");
+        r.write("a.txt", b"original\n");
+        r.commit_all();
+
+        write_file(r.root(), "a.txt".into(), "edited\n".into()).unwrap();
+
+        let on_disk = std::fs::read_to_string(r.path().join("a.txt")).unwrap();
+        assert_eq!(on_disk, "edited\n");
+
+        let status = get_status(r.root()).unwrap();
+        let f = status.iter().find(|f| f.path == "a.txt").expect("a.txt must show up as changed");
+        assert_eq!(f.kind, ChangeKind::Modified);
     }
 
     #[test]

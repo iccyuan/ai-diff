@@ -214,6 +214,7 @@ export const api = {
   listFiles: (repo: string, showIgnored: boolean) =>
     invoke<string[]>("list_files", { repo, showIgnored }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
+  writeFile: (repo: string, path: string, content: string) => invoke<void>("write_file", { repo, path, content }),
   repoStats: (repo: string) => invoke<RepoStats>("repo_stats", { repo }),
   logCommits: (repo: string, skip: number, count: number, branch: string | null = null) =>
     invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch }),
