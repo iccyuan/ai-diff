@@ -404,16 +404,16 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         </div>
       </div>
       <div class="log-main">
-        <div class="log-search-bar">
-          <input v-model="searchInput" type="text" class="log-search-input" placeholder="搜索提交（主题 / 作者 / 哈希）…" />
-          <button v-if="searchInput" title="清除搜索" @click="clearSearch">✕</button>
-        </div>
         <div v-if="repo.logBranchFilter" class="log-filter-bar">
           <span>筛选：{{ repo.logBranchFilter }}</span>
           <button title="清除筛选" @click="repo.setLogBranchFilter(null)">✕</button>
         </div>
         <div class="log-content">
           <div class="log-table">
+            <div class="log-search-bar">
+              <input v-model="searchInput" type="text" class="log-search-input" placeholder="搜索提交（主题 / 作者 / 哈希）…" />
+              <button v-if="searchInput" title="清除搜索" @click="clearSearch">✕</button>
+            </div>
             <div class="log-header" @contextmenu.prevent.stop="openColumnMenu">
               <span class="log-header-graph" :style="{ width: graphCols * LANE_W + 'px' }"></span>
               <span class="log-header-subject">主题</span>

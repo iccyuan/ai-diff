@@ -451,6 +451,7 @@ body {
 .branch-filter {
   flex: 1;
   min-width: 0;
+  padding: 4px 8px;
   font-size: 12.5px;
 }
 
@@ -1065,7 +1066,7 @@ input[type="checkbox"]:checked::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 6px 2px;
   border-bottom: 1px solid var(--border);
 }
 

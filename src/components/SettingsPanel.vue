@@ -53,6 +53,18 @@ const repo = useRepoStore();
           />
         </label>
 
+        <label class="field">
+          <span>代码行高：{{ settings.editorLineHeight.toFixed(2) }} 倍（VS Code 约 1.35）</span>
+          <input
+            type="range"
+            min="1.2"
+            max="1.8"
+            step="0.05"
+            :value="settings.editorLineHeight"
+            @input="settings.setEditorLineHeight(Number(($event.target as HTMLInputElement).value))"
+          />
+        </label>
+
         <label class="field row">
           <input
             type="checkbox"

@@ -323,9 +323,10 @@ function renderContent() {
       scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
       fontFamily: settings.editorFontFamily,
       fontSize: settings.editorFontSize,
-      // Monaco's unset default computes a looser line height than feels
-      // right next to the rest of this app's compact UI
-      lineHeight: Math.round(settings.editorFontSize * 1.4),
+      // ligature fonts (JetBrains Mono / Fira Code / Cascadia) render === → ⇒
+      // etc.; Monaco disables them unless asked, non-ligature fonts ignore it
+      fontLigatures: true,
+      lineHeight: settings.editorLineHeightPx,
       // Monaco's default (10px) gutter-to-code gap reads as a wide empty
       // column next to the line numbers; a tighter gap matches the rest of
       // this app's compact spacing
@@ -486,7 +487,8 @@ onMounted(() => {
     wordWrap: "off",
     fontFamily: settings.editorFontFamily,
     fontSize: settings.editorFontSize,
-    lineHeight: Math.round(settings.editorFontSize * 1.4),
+    fontLigatures: true,
+    lineHeight: settings.editorLineHeightPx,
     lineDecorationsWidth: 4,
     lineNumbersMinChars: 4,
   });
@@ -499,7 +501,8 @@ onMounted(() => {
   // both sides so original/modified never drift out of sync
   const sideOptions = {
     wordWrap: "off" as const,
-    lineHeight: Math.round(settings.editorFontSize * 1.4),
+    fontLigatures: true,
+    lineHeight: settings.editorLineHeightPx,
     lineDecorationsWidth: 4,
     lineNumbersMinChars: 4,
     scrollbar: {
@@ -562,9 +565,8 @@ watch(
   (v) => editor?.updateOptions({ renderSideBySide: v }),
 );
 watch(
-  () => [settings.editorFontFamily, settings.editorFontSize] as const,
-  ([family, size]) => {
-    const lineHeight = Math.round(size * 1.4);
+  () => [settings.editorFontFamily, settings.editorFontSize, settings.editorLineHeightPx] as const,
+  ([family, size, lineHeight]) => {
     editor?.updateOptions({ fontFamily: family, fontSize: size, lineHeight });
     editor?.getOriginalEditor().updateOptions({ fontFamily: family, fontSize: size, lineHeight });
     editor?.getModifiedEditor().updateOptions({ fontFamily: family, fontSize: size, lineHeight });

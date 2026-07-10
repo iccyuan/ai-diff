@@ -3,13 +3,29 @@ import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 
 // fonts ship with the app (woff2 bundled by vite) — no system fonts required
+// every family needs its real 400/700 + italics bundled: themes bold keywords
+// and italicize comments, and a missing face gets synthesized by the browser
+// with wrong advance widths — Monaco lays out by measured char width, so faux
+// bold/italic shows up as misaligned columns and a drifting caret
 import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/400-italic.css";
 import "@fontsource/jetbrains-mono/700.css";
+import "@fontsource/jetbrains-mono/700-italic.css";
+// Fira Code ships no italic — the synthesized oblique keeps glyph widths, so it's safe
 import "@fontsource/fira-code/400.css";
 import "@fontsource/fira-code/700.css";
 import "@fontsource/cascadia-code/400.css";
+import "@fontsource/cascadia-code/400-italic.css";
+import "@fontsource/cascadia-code/700.css";
+import "@fontsource/cascadia-code/700-italic.css";
 import "@fontsource/source-code-pro/400.css";
+import "@fontsource/source-code-pro/400-italic.css";
+import "@fontsource/source-code-pro/700.css";
+import "@fontsource/source-code-pro/700-italic.css";
 import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/400-italic.css";
+import "@fontsource/ibm-plex-mono/700.css";
+import "@fontsource/ibm-plex-mono/700-italic.css";
 
 // theme definitions vendored from monaco-themes (MIT) — its package exports
 // don't expose ./themes/*.json so they can't be imported from the package

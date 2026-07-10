@@ -1,6 +1,7 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { applyTheme, DEFAULT_EDITOR_FONT_ID, EDITOR_FONTS, fontFamilyFor, THEMES } from "../monaco/setup";
 
 const persist = new LazyStore("settings.json");
@@ -10,6 +11,17 @@ function applyGlass(on: boolean) {
   document.documentElement.dataset.glass = on ? "on" : "off";
   getCurrentWindow()
     .setEffects({ effects: on ? ["acrylic"] : [] } as never)
+    .catch(() => {});
+  // a transparent webview renders all text with grayscale antialiasing —
+  // ClearType needs an opaque backdrop. With glass off nothing shows through
+  // anyway, so an opaque webview background buys back subpixel-crisp text
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
+  const m = /^#([0-9a-f]{6})$/i.exec(bg);
+  const rgb: [number, number, number] = m
+    ? [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)]
+    : [35, 35, 38];
+  getCurrentWebview()
+    .setBackgroundColor(on ? [0, 0, 0, 0] : [rgb[0], rgb[1], rgb[2], 255])
     .catch(() => {});
 }
 
@@ -25,6 +37,8 @@ export const useSettingsStore = defineStore("settings", {
     recentRepos: [] as string[],
     editorFont: DEFAULT_EDITOR_FONT_ID,
     editorFontSize: 13,
+    /** line height as a ratio of font size — VS Code uses ~1.35 on Windows */
+    editorLineHeight: 1.5,
     sidebarWidth: 300,
     activeLeftPanel: "project" as "project" | "commit",
     /** clicking the active ActivityBar icon again collapses the Project/Commit
@@ -54,6 +68,9 @@ export const useSettingsStore = defineStore("settings", {
     editorFontFamily(state): string {
       return fontFamilyFor(state.editorFont);
     },
+    editorLineHeightPx(state): number {
+      return Math.round(state.editorFontSize * state.editorLineHeight);
+    },
   },
   actions: {
     async load() {
@@ -63,6 +80,7 @@ export const useSettingsStore = defineStore("settings", {
         const recent = await persist.get<string[]>("recentRepos");
         const font = await persist.get<string>("editorFont");
         const size = await persist.get<number>("editorFontSize");
+        const lineH = await persist.get<number>("editorLineHeight");
         const width = await persist.get<number>("sidebarWidth");
         const panel = await persist.get<string>("activeLeftPanel");
         const collapsed = await persist.get<boolean>("sidebarCollapsed");
@@ -82,6 +100,7 @@ export const useSettingsStore = defineStore("settings", {
         if (Array.isArray(recent)) this.recentRepos = recent;
         if (font && EDITOR_FONTS.some((f) => f.id === font)) this.editorFont = font;
         if (typeof size === "number" && size >= 10 && size <= 24) this.editorFontSize = size;
+        if (typeof lineH === "number" && lineH >= 1.2 && lineH <= 1.8) this.editorLineHeight = lineH;
         if (typeof width === "number" && width >= 200 && width <= 600) this.sidebarWidth = width;
         if (panel === "project" || panel === "commit") this.activeLeftPanel = panel;
         if (typeof collapsed === "boolean") this.sidebarCollapsed = collapsed;
@@ -118,6 +137,8 @@ export const useSettingsStore = defineStore("settings", {
     async setTheme(id: string) {
       this.monacoTheme = id;
       applyTheme(id);
+      // the opaque no-glass webview background tracks the theme's --bg
+      applyGlass(this.glassEffect);
       await persist.set("monacoTheme", id);
       await persist.save();
     },
@@ -140,6 +161,11 @@ export const useSettingsStore = defineStore("settings", {
     async setEditorFontSize(size: number) {
       this.editorFontSize = Math.min(24, Math.max(10, Math.round(size) || 13));
       await persist.set("editorFontSize", this.editorFontSize);
+      await persist.save();
+    },
+    async setEditorLineHeight(ratio: number) {
+      this.editorLineHeight = Math.min(1.8, Math.max(1.2, Math.round(ratio * 20) / 20 || 1.5));
+      await persist.set("editorLineHeight", this.editorLineHeight);
       await persist.save();
     },
     async setShowHidden(v: boolean) {
