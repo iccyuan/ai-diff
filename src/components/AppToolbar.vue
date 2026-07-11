@@ -68,16 +68,20 @@ const recentMenuEl = ref<HTMLElement | null>(null);
 const recentSubmenuOpen = ref(false);
 const recentSubmenuPos = ref({ x: 0, y: 0 });
 
-function toggleRecentSubmenu() {
-  if (recentSubmenuOpen.value) {
-    recentSubmenuOpen.value = false;
-    return;
-  }
+function openRecentSubmenu() {
+  if (recentSubmenuOpen.value) return;
   if (recentBtn.value) {
     const r = recentBtn.value.getBoundingClientRect();
     recentSubmenuPos.value = { x: r.right + 4, y: r.top };
   }
   recentSubmenuOpen.value = true;
+}
+function toggleRecentSubmenu() {
+  if (recentSubmenuOpen.value) {
+    recentSubmenuOpen.value = false;
+    return;
+  }
+  openRecentSubmenu();
 }
 
 function onDocPointer(e: MouseEvent) {
@@ -172,11 +176,12 @@ function onOpenSettings() {
 
     <Teleport to="body">
       <div v-if="openMenuId === 'file'" ref="menuEl" class="recent-menu" :style="{ left: menuPos.x + 'px', top: menuPos.y + 'px' }">
-        <button class="recent-item" @click="pickFolder">
+        <!-- hovering a sibling item closes the flyout, like a native menu -->
+        <button class="recent-item" @click="pickFolder" @mouseenter="recentSubmenuOpen = false">
           <span class="recent-icon">📂</span>
           <span class="recent-text"><span class="recent-name">打开项目…</span></span>
         </button>
-        <button class="recent-item" @click="onClone">
+        <button class="recent-item" @click="onClone" @mouseenter="recentSubmenuOpen = false">
           <span class="recent-icon">📥</span>
           <span class="recent-text"><span class="recent-name">克隆仓库…</span></span>
         </button>
@@ -185,6 +190,7 @@ function onOpenSettings() {
           ref="recentBtn"
           class="recent-item"
           :class="{ active: recentSubmenuOpen }"
+          @mouseenter="openRecentSubmenu"
           @click.stop="toggleRecentSubmenu"
         >
           <span class="recent-icon">🕘</span>
