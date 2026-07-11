@@ -132,11 +132,19 @@
 }
 
 /* round Monaco's own scrollbar sliders to match, and auto-hide them until the
-   editor is hovered (like the overlay scrollbars elsewhere) */
+   editor is hovered (like the overlay scrollbars elsewhere); the transparent
+   border + background-clip slims the 8px slider to the same 4px visible bar
+   as the app-wide overlay scrollbars, growing to 6px under the pointer */
 .monaco-scrollable-element > .scrollbar > .slider {
   border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
   opacity: 0;
   transition: opacity 0.25s ease;
+}
+.monaco-scrollable-element > .scrollbar > .slider:hover,
+.monaco-scrollable-element > .scrollbar > .slider.active {
+  border-width: 1px;
 }
 .monaco-editor:hover .monaco-scrollable-element > .scrollbar > .slider,
 .monaco-scrollable-element:hover > .scrollbar > .slider {
@@ -1070,13 +1078,15 @@ input[type="checkbox"]:checked::after {
   border-bottom: 1px solid var(--border);
 }
 
-.log-search-input {
+/* input.-class beats the global input:not(...):not(...) rule's specificity,
+   which otherwise reinstates its rounded corners */
+.log-search-bar input.log-search-input {
   flex: 1;
   min-width: 0;
   background: var(--control-bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 0;
   padding: 5px 9px;
   font-size: 12.5px;
 }
