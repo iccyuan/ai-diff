@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "gitprism",
+  "productName": "GitPrism",
   "version": "0.3.0",
   "identifier": "com.aidiff.app",
   "build": {
