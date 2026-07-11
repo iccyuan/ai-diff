@@ -54,6 +54,13 @@ function splitArgs(args: string): { sub: string; rest: string } {
 watch(subTab, (t) => {
   if (t === "console") loadConsole();
 });
+// revealLogCommit (blame-annotation click) targets the 日志 view
+watch(
+  () => repo.logRevealSeq,
+  () => {
+    subTab.value = "log";
+  },
+);
 // keep an already-open console tab live: refreshWs bumps refreshSeq each time
 // it completes, an explicit "the workspace's data just changed" signal
 watch(

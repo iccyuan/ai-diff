@@ -1580,6 +1580,61 @@ pub async fn get_commit_message(repo: String, hash: String) -> Result<String, St
     Ok(out.trim_end_matches('\n').to_string())
 }
 
+/// per-line git blame of the working-tree file — powers the IDEA-style
+/// "显示提交信息" line-number annotations
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    pub hash: String,
+    pub author: String,
+    /// author date as unix seconds; 0 for not-yet-committed lines
+    pub time: i64,
+    pub summary: String,
+    /// false for lines that only exist in the working tree (all-zero hash)
+    pub committed: bool,
+}
+
+#[tauri::command]
+pub async fn blame_file(repo: String, path: String) -> Result<Vec<BlameLine>, String> {
+    let root = PathBuf::from(&repo);
+    // content lines may be any encoding, so parse lossily; only headers matter
+    let bytes = run_git(&root, &["blame", "--line-porcelain", "--", &path], None)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines = Vec::new();
+    let mut cur: Option<BlameLine> = None;
+    for l in text.lines() {
+        if l.starts_with('\t') {
+            // the tab-prefixed content line closes one record
+            if let Some(b) = cur.take() {
+                lines.push(b);
+            }
+            continue;
+        }
+        let Some(b) = cur.as_mut() else {
+            // "<40-hex> <orig-line> <final-line> [group-size]" starts a record
+            let hash = l.split(' ').next().unwrap_or("");
+            if hash.len() == 40 && hash.bytes().all(|c| c.is_ascii_hexdigit()) {
+                cur = Some(BlameLine {
+                    committed: !hash.bytes().all(|c| c == b'0'),
+                    hash: hash.to_string(),
+                    author: String::new(),
+                    time: 0,
+                    summary: String::new(),
+                });
+            }
+            continue;
+        };
+        if let Some(v) = l.strip_prefix("author ") {
+            b.author = v.to_string();
+        } else if let Some(v) = l.strip_prefix("author-time ") {
+            b.time = v.parse().unwrap_or(0);
+        } else if let Some(v) = l.strip_prefix("summary ") {
+            b.summary = v.to_string();
+        }
+    }
+    Ok(lines)
+}
+
 #[tauri::command]
 pub async fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
     let repo = PathBuf::from(repo);

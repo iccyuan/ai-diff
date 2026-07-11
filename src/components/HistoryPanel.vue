@@ -320,6 +320,18 @@ function onScroll() {
   }
 }
 
+// revealLogCommit (blame-annotation click) selected a commit — center its row
+async function scrollToActiveCommit() {
+  await nextTick(); // the panel may only just have been opened / switched to
+  const el = scroller.value;
+  const hash = repo.logActiveCommit;
+  if (!el || !hash) return;
+  const idx = repo.commits.findIndex((c) => c.hash === hash);
+  if (idx < 0) return;
+  el.scrollTop = Math.max(0, idx * COMMIT_ROW_PX - (el.clientHeight - COMMIT_ROW_PX) / 2);
+}
+watch(() => repo.logRevealSeq, scrollToActiveCommit);
+
 function name(f: FileStatus): string {
   return f.path.split("/").pop()!;
 }
@@ -349,6 +361,9 @@ onMounted(() => {
   window.addEventListener("resize", fitPageSize);
   if (!repo.commits.length) repo.loadCommits();
   if (repo.ws) repo.loadBranches(repo.ws);
+  // a reveal may have opened the panel just now — the watcher above wasn't
+  // registered yet when the seq bumped, so also position on mount
+  scrollToActiveCommit();
 });
 
 onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));

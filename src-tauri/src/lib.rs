@@ -130,6 +130,7 @@ pub fn run() {
             git::log_commits,
             git::commit_files,
             git::get_commit_message,
+            git::blame_file,
             git::get_commit_file_diff,
             git::auto_open_path,
             git::search_text,

@@ -18,6 +18,8 @@ import { useSettingsStore } from "./settings";
 let watcherHooked = false;
 // our own refreshes touch .git/index and would echo back as watcher events
 let suppressAutoRefreshUntil = 0;
+// revealLogCommit re-entry guard: rapid blame clicks must not stack loads
+let revealInFlight = false;
 
 export interface ViewTab {
   id: string;
@@ -117,6 +119,9 @@ export const useRepoStore = defineStore("repo", {
   state: () => ({
     workspaces: [] as Workspace[],
     active: -1,
+    /** bumped by revealLogCommit — GitPanel switches to 日志 and
+     * HistoryPanel scrolls the selected commit into view */
+    logRevealSeq: 0,
     /** sidebar view mode is global: one switch for every project */
     viewMode: "changes" as "changes" | "all",
   }),
@@ -877,6 +882,56 @@ export const useRepoStore = defineStore("repo", {
         } catch (e) {
           toast(String(e), "error");
         }
+      }
+    },
+    /** jump to a commit in the Git panel's 日志 (blame-annotation click):
+     * opens the panel, loads history up to the hash in one go, selects it,
+     * and signals GitPanel/HistoryPanel to switch tab + scroll to the row */
+    async revealLogCommit(hash: string) {
+      const w = this.ws;
+      if (!w || revealInFlight) return;
+      revealInFlight = true;
+      try {
+        useSettingsStore().setGitPanelOpen(true);
+        // a live search shows a bounded result set that likely excludes the hash
+        if (w.logSearchQuery) await this.setLogSearchQuery(null);
+        const found = () => w.commits.some((c) => c.hash === hash);
+        if (!found() && !w.commitsExhausted) {
+          // wait out any in-flight page load — a concurrent skip/count fetch
+          // would append duplicate rows
+          for (let i = 0; i < 100 && w.loadingCommits; i++) {
+            await new Promise((r) => setTimeout(r, 50));
+          }
+          // one rev-list gives the commit's row index (newest-first), so the
+          // gap loads in a single git-log call instead of page-by-page — the
+          // paged loop froze the UI on big repos (dozens of sequential git
+          // spawns, each append rebuilding the commit graph)
+          const target = w.logBranchFilter ?? "HEAD";
+          const after = await api.countCommitsBetween(w.repo.root, hash, target);
+          // merges can shift git-log order relative to rev-list counting
+          const needed = after + 50;
+          const requested = needed - w.commits.length;
+          if (requested > 0) {
+            w.loadingCommits = true;
+            try {
+              const batch = await api.logCommits(w.repo.root, w.commits.length, requested, w.logBranchFilter);
+              w.commits.push(...batch);
+              if (batch.length < requested) w.commitsExhausted = true;
+            } finally {
+              w.loadingCommits = false;
+            }
+          }
+        }
+        if (!found()) {
+          toast("日志中未找到该提交（可能被分支筛选排除）", "error");
+          return;
+        }
+        await this.selectLogCommit(hash);
+        this.logRevealSeq++;
+      } catch (e) {
+        toast(String(e), "error");
+      } finally {
+        revealInFlight = false;
       }
     },
   },

@@ -8,7 +8,7 @@ import { useRepoStore } from "../stores/repo";
 import { useSettingsStore } from "../stores/settings";
 import { confirmDialog } from "../lib/confirm";
 import { openFindDialog, openChooser } from "../lib/palette";
-import { api, type Hunk, type ImageDiff } from "../lib/api";
+import { api, type BlameLine, type Hunk, type ImageDiff } from "../lib/api";
 import { isVectorSource, vectorDataUrl } from "../lib/vector";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
@@ -64,6 +64,77 @@ function onBeforeUnloadWarnUnsaved(e: BeforeUnloadEvent) {
   if (!contentDirty.value) return;
   e.preventDefault();
 }
+
+// ----- IDEA-style annotate: right-click the line numbers → git blame
+// annotations rendered into the gutter via a custom lineNumbers provider -----
+const blameOn = ref(false);
+let blameData: BlameLine[] | null = null;
+const gutterMenu = ref<{ x: number; y: number } | null>(null);
+
+// the gutter is monospace: CJK glyphs occupy roughly two columns
+function cols(s: string): number {
+  let w = 0;
+  for (const ch of s) w += /[ᄀ-ᇿ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1;
+  return w;
+}
+function clipCols(s: string, max: number): string {
+  let w = 0;
+  let out = "";
+  for (const ch of s) {
+    w += cols(ch);
+    if (w > max) return out + "…";
+    out += ch;
+  }
+  return out;
+}
+async function enableBlame() {
+  gutterMenu.value = null;
+  if (!repo.repo || !repo.selectedPath || !plainEditor) return;
+  if (contentDirty.value) {
+    toast("文件有未保存的更改，请先保存再显示提交信息", "error");
+    return;
+  }
+  try {
+    const data = await api.blameFile(repo.repo.root, repo.selectedPath);
+    if (!data.length) return;
+    blameData = data;
+    blameOn.value = true;
+    // hash + author only — with the date the gutter got too wide; full commit
+    // details live in the 日志 row a click jumps to
+    const ann = data.map((b) => (b.committed ? `${b.hash.slice(0, 6)} ${clipCols(b.author, 12)}` : "未提交"));
+    const width = Math.max(...ann.map(cols));
+    // pad with NBSP — plain spaces collapse in the line-number DOM node
+    const pad = (s: string) => s + " ".repeat(Math.max(0, width - cols(s)));
+    plainEditor.updateOptions({
+      lineNumbers: (n: number) => `${pad(ann[n - 1] ?? "")}  ${n}`,
+      // +2 separator +1 slack for CJK fallback glyphs being wider than 2 cols
+      lineNumbersMinChars: width + String(data.length).length + 3,
+    });
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+function disableBlame() {
+  gutterMenu.value = null;
+  if (!blameOn.value) return;
+  blameOn.value = false;
+  blameData = null;
+  plainEditor?.updateOptions({ lineNumbers: "on", lineNumbersMinChars: 4 });
+}
+function closeBlameUi() {
+  gutterMenu.value = null;
+}
+function onBlameEsc(e: KeyboardEvent) {
+  if (e.key === "Escape") closeBlameUi();
+}
+onMounted(() => {
+  window.addEventListener("click", closeBlameUi);
+  window.addEventListener("keydown", onBlameEsc);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("click", closeBlameUi);
+  window.removeEventListener("keydown", onBlameEsc);
+});
 
 // ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
 const navList = ref<number[]>([]);
@@ -340,14 +411,32 @@ function renderContent() {
       keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
       run: () => saveContent(),
     });
+    // IDEA-style annotate entry point: right-click the line-number gutter
+    plainEditor.onContextMenu((e) => {
+      const t = e.target.type;
+      if (t !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS && t !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+      e.event.preventDefault();
+      e.event.stopPropagation();
+      gutterMenu.value = { x: e.event.posx, y: e.event.posy };
+    });
+    // with annotations on, clicking a line's annotation jumps the Git panel's
+    // 日志 to that commit
+    plainEditor.onMouseDown((e) => {
+      if (!blameOn.value || !blameData || e.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) return;
+      const line = e.target.position?.lineNumber;
+      const b = line ? blameData[line - 1] : undefined;
+      if (b?.committed) repo.revealLogCommit(b.hash);
+    });
   }
   if (!plainEditor) return;
+  disableBlame(); // annotations belong to the previous file / stale content
   const model = monaco.editor.createModel(c.content, languageForPath(repo.selectedPath));
   models = [model];
   plainEditor.setModel(model);
   contentDirty.value = false;
   model.onDidChangeContent(() => {
     contentDirty.value = true;
+    disableBlame(); // line numbers shift as soon as the buffer is edited
   });
   if (repo.pendingRevealLine) mdPreviewOn.value = false;
   revealPendingLine(plainEditor);
@@ -669,5 +758,18 @@ onBeforeUnmount(() => {
       </svg>
       <span>{{ overlayText }}</span>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="gutterMenu"
+        class="ctx-menu"
+        :style="{ left: gutterMenu.x + 'px', top: gutterMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent
+      >
+        <button v-if="!blameOn" @click="enableBlame">显示提交信息（Git Blame）</button>
+        <button v-else @click="disableBlame">关闭提交信息</button>
+      </div>
+    </Teleport>
   </section>
 </template>

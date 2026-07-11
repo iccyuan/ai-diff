@@ -222,6 +222,7 @@ export const api = {
     invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
   getCommitMessage: (repo: string, hash: string) => invoke<string>("get_commit_message", { repo, hash }),
+  blameFile: (repo: string, path: string) => invoke<BlameLine[]>("blame_file", { repo, path }),
   getCommitFileDiff: (repo: string, hash: string, f: FileStatus) =>
     invoke<FileDiff>("get_commit_file_diff", {
       repo,
@@ -244,4 +245,14 @@ export interface SearchHit {
   path: string;
   line: number;
   text: string;
+}
+
+/** one working-tree line's blame record (IDEA-style gutter annotate) */
+export interface BlameLine {
+  hash: string;
+  author: string;
+  /** author date as unix seconds; 0 for not-yet-committed lines */
+  time: number;
+  summary: string;
+  committed: boolean;
 }
