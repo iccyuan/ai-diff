@@ -63,6 +63,8 @@ export const useSettingsStore = defineStore("settings", {
     glassOpacity: 54,
     /** 全部文件 view: also list .gitignore'd / hidden files and folders */
     showHidden: false,
+    /** 全部文件 editor: save automatically shortly after the last edit */
+    autoSave: false,
   }),
   getters: {
     editorFontFamily(state): string {
@@ -98,6 +100,7 @@ export const useSettingsStore = defineStore("settings", {
         const glass = await persist.get<boolean>("glassEffect");
         const glassOp = await persist.get<number>("glassOpacity");
         const hidden = await persist.get<boolean>("showHidden");
+        const autoSave = await persist.get<boolean>("autoSave");
         if (theme && THEMES.some((t) => t.id === theme)) this.monacoTheme = theme;
         if (typeof side === "boolean") this.renderSideBySide = side;
         if (Array.isArray(recent)) this.recentRepos = recent;
@@ -115,6 +118,7 @@ export const useSettingsStore = defineStore("settings", {
         if (typeof showEmailCol === "boolean") this.logShowEmailCol = showEmailCol;
         if (typeof showChangesCol === "boolean") this.logShowChangesCol = showChangesCol;
         if (pullStrategy === "merge" || pullStrategy === "rebase") this.pullStrategy = pullStrategy;
+        if (typeof autoSave === "boolean") this.autoSave = autoSave;
         if (typeof glass === "boolean") this.glassEffect = glass;
         if (typeof glassOp === "number" && glassOp >= 25 && glassOp <= 75) this.glassOpacity = glassOp;
         if (typeof hidden === "boolean") this.showHidden = hidden;
@@ -210,6 +214,11 @@ export const useSettingsStore = defineStore("settings", {
     async saveLogColumnWidths() {
       await persist.set("logAuthorColWidth2", this.logAuthorColWidth);
       await persist.set("logDateColWidth", this.logDateColWidth);
+      await persist.save();
+    },
+    async toggleAutoSave() {
+      this.autoSave = !this.autoSave;
+      await persist.set("autoSave", this.autoSave);
       await persist.save();
     },
     async toggleLogCol(col: "hash" | "email" | "changes") {

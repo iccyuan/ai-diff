@@ -51,15 +51,19 @@ self.MonacoEnvironment = {
   },
 };
 
-// real TS/JS semantics: keep go-to-definition + type hovers, but turn off
-// semantic diagnostics so single-file viewing isn't littered with
-// "cannot find module" errors from imports we don't load into the worker.
+// this app is a Git tool, not an IDE: keep completion, hovers and semantic
+// navigation (F12), but suppress ALL compile/lint diagnostics — a review
+// surface must not paint red squiggles over code it only partially loads.
 // (root export types languages.typescript as a deprecated stub; the runtime
 // API is present once the full package is imported, so reach it via any.)
 const ts = (monaco.languages as unknown as { typescript?: any }).typescript;
 if (ts) {
   for (const d of [ts.typescriptDefaults, ts.javascriptDefaults]) {
-    d.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+    d.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+      noSuggestionDiagnostics: true,
+    });
     d.setCompilerOptions({
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.ESNext,
@@ -69,6 +73,13 @@ if (ts) {
       allowNonTsExtensions: true,
     });
   }
+}
+// same for the other built-in language services that validate by default
+const jsonLang = (monaco.languages as unknown as { json?: any }).json;
+jsonLang?.jsonDefaults?.setDiagnosticsOptions({ validate: false });
+const cssLang = (monaco.languages as unknown as { css?: any }).css;
+for (const d of [cssLang?.cssDefaults, cssLang?.lessDefaults, cssLang?.scssDefaults]) {
+  d?.setOptions({ validate: false });
 }
 
 const CUSTOM_THEMES: Record<string, unknown> = {

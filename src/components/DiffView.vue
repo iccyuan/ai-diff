@@ -47,11 +47,13 @@ const previewData = computed<ImageDiff | null>(() => (isRasterImage.value ? imag
 // the dirty indicator + beforeunload guard are the only safety nets. -----
 const contentDirty = ref(false);
 let savingContent = false;
+let savedVersionId = 0;
 async function saveContent() {
   if (!contentDirty.value || savingContent || !repo.repo || !repo.selectedPath || !plainEditor) return;
   savingContent = true;
   try {
     await api.writeFile(repo.repo.root, repo.selectedPath, plainEditor.getValue());
+    savedVersionId = plainEditor.getModel()?.getAlternativeVersionId() ?? 0;
     contentDirty.value = false;
     toast(`已保存 ${repo.selectedPath}`, "ok");
     if (repo.ws) await repo.refreshWs(repo.ws);
@@ -60,6 +62,16 @@ async function saveContent() {
   } finally {
     savingContent = false;
   }
+}
+
+// 自动保存 (toggled in the 文件 menu): save shortly after the last keystroke
+let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleAutoSave() {
+  if (!settings.autoSave) return;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    if (settings.autoSave && contentDirty.value) saveContent();
+  }, 1000);
 }
 function onBeforeUnloadWarnUnsaved(e: BeforeUnloadEvent) {
   if (!contentDirty.value) return;
@@ -140,6 +152,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("click", closeBlameUi);
   window.removeEventListener("keydown", onBlameEsc);
+  clearTimeout(autoSaveTimer);
 });
 
 // ----- next/prev change navigation (IDEA F7 / Shift+F7) -----
@@ -393,6 +406,9 @@ function renderContent() {
       // 全部文件 mode shows the live working-tree file, so — unlike the diff
       // view, which compares two fixed states — it's editable
       readOnly: false,
+      // Git tool, not an IDE: never draw diagnostic squiggles (completion
+      // and hovers are unaffected)
+      renderValidationDecorations: "off",
       cursorBlinking: "solid", // we blink the caret ourselves in CSS (see .cursor rule)
       automaticLayout: true,
       minimap: { enabled: false },
@@ -440,9 +456,13 @@ function renderContent() {
   models = [model];
   plainEditor.setModel(model);
   contentDirty.value = false;
+  // savepoint tracking: undoing back to the last saved state clears the
+  // dirty flag again (alternativeVersionId is undo/redo-aware)
+  savedVersionId = model.getAlternativeVersionId();
   model.onDidChangeContent(() => {
-    contentDirty.value = true;
+    contentDirty.value = model.getAlternativeVersionId() !== savedVersionId;
     disableBlame(); // line numbers shift as soon as the buffer is edited
+    scheduleAutoSave();
   });
   if (repo.pendingRevealLine) mdPreviewOn.value = false;
   revealPendingLine(plainEditor);
@@ -560,6 +580,8 @@ onMounted(() => {
   editor = monaco.editor.createDiffEditor(container.value!, {
     readOnly: true,
     originalEditable: false,
+    renderValidationDecorations: "off", // Git tool, not an IDE — no squiggles
+
     cursorBlinking: "solid", // we blink the caret ourselves in CSS (see .cursor rule)
     automaticLayout: true,
     renderSideBySide: settings.renderSideBySide,
@@ -698,7 +720,7 @@ onBeforeUnmount(() => {
       class="editor"
       :class="{ 'has-side-labels': settings.renderSideBySide && (repo.selectedPath || repo.selectedCommitPath) }"
     ></div>
-    <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor"></div>
+    <div v-show="contentMode && !showMdPreview && !isImageView" ref="plainContainer" class="editor content-editor"></div>
     <div v-if="showMdPreview" class="md-preview" @click="onPreviewClick" v-html="renderedMd"></div>
 
     <div v-if="isImageView && isVectorImage" class="image-diff">

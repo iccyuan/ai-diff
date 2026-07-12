@@ -329,7 +329,8 @@ body {
      its backdrop-filter blurs the real app behind it (not the glass toolbar) */
   position: fixed;
   z-index: 300;
-  min-width: 280px;
+  width: max-content;
+  min-width: 120px;
   max-width: 480px;
   max-height: 60vh;
   overflow-y: auto;
@@ -374,9 +375,18 @@ body {
 
 .recent-icon {
   flex: none;
-  font-size: 14px;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
   opacity: 0.85;
+}
+
+.recent-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
 }
 
 .recent-text {
@@ -414,6 +424,87 @@ body {
   padding-left: 12px;
   font-size: 15px;
   opacity: 0.7;
+}
+
+/* ----- 首选项 menu: inline settings rows ----- */
+.menu-check {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* hovered/active rows turn accent-blue — an accent-colored tick would
+ * vanish against it, so it flips to white there */
+.recent-item:hover:not(:disabled) .menu-check,
+.recent-item.active .menu-check {
+  color: #fff;
+}
+
+.menu-group-label {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.menu-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.menu-stepper.disabled .stepper-label {
+  opacity: 0.5;
+}
+
+.menu-stepper .stepper-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-stepper .stepper-val {
+  flex: none;
+  min-width: 44px;
+  text-align: center;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.menu-stepper button {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--control-bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.menu-stepper button:hover:not(:disabled) {
+  background: var(--control-hover, var(--bg-hover));
+}
+
+.menu-stepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.submenu-scroll {
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 .recent-item:hover:not(:disabled) .recent-dir {

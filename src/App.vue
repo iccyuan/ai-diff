@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -13,7 +13,6 @@ import GitPanel from "./components/GitPanel.vue";
 import DiffView from "./components/DiffView.vue";
 import ViewTabs from "./components/ViewTabs.vue";
 import SummaryView from "./components/SummaryView.vue";
-import SettingsPanel from "./components/SettingsPanel.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import PromptDialog from "./components/PromptDialog.vue";
 import ResetDialog from "./components/ResetDialog.vue";
@@ -29,7 +28,6 @@ import { checkForUpdate } from "./lib/update";
 import { useRepoStore } from "./stores/repo";
 import { useSettingsStore } from "./stores/settings";
 
-const settingsOpen = ref(false);
 const settings = useSettingsStore();
 const repo = useRepoStore();
 
@@ -80,6 +78,9 @@ function onGlobalKey(e: KeyboardEvent) {
     e.stopPropagation();
     openQuickOpen();
   } else if (!e.shiftKey && !e.altKey && e.code === "KeyH") {
+    // inside the editable file editor, Ctrl+H stays Monaco's own
+    // find & replace — the global cross-file search takes it elsewhere
+    if ((e.target as HTMLElement).closest?.(".content-editor")) return;
     e.preventDefault();
     e.stopPropagation();
     openFindDialog();
@@ -167,7 +168,7 @@ onMounted(async () => {
 
 <template>
   <div class="app">
-    <AppToolbar @open-settings="settingsOpen = true" />
+    <AppToolbar />
     <div class="body">
       <ActivityBar />
       <div v-show="!settings.sidebarCollapsed" class="sidebar-panels">
@@ -187,7 +188,6 @@ onMounted(async () => {
         <GitPanel v-if="settings.gitPanelOpen && repo.repo" />
       </div>
     </div>
-    <SettingsPanel :open="settingsOpen" @close="settingsOpen = false" />
     <QuickOpen />
     <SearchPanel />
     <SymbolChooser />
