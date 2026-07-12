@@ -47,6 +47,7 @@ const menuEl = ref<HTMLElement | null>(null);
 const menuPos = ref({ x: 0, y: 0 });
 
 function toggleMenu(id: MenuId, triggerEl: HTMLElement | null) {
+  clearTimeout(hoverTimer);
   submenu.value = null;
   if (openMenuId.value === id) {
     openMenuId.value = null;
@@ -59,15 +60,29 @@ function toggleMenu(id: MenuId, triggerEl: HTMLElement | null) {
   openMenuId.value = id;
 }
 
-// top-level menus open on hover, native-menubar style — no click needed
-function hoverMenu(id: MenuId, triggerEl: HTMLElement | null) {
-  if (openMenuId.value === id) return;
+// top-level menus open on hover, native-menubar style — with a short delay
+// so sliding the pointer across the toolbar doesn't pop menus by accident;
+// once one menu is open, moving between triggers switches instantly
+let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+function openMenuAt(id: MenuId, triggerEl: HTMLElement | null) {
   submenu.value = null;
   if (triggerEl) {
     const r = triggerEl.getBoundingClientRect();
     menuPos.value = { x: r.left, y: r.bottom + 4 };
   }
   openMenuId.value = id;
+}
+function hoverMenu(id: MenuId, triggerEl: HTMLElement | null) {
+  clearTimeout(hoverTimer);
+  if (openMenuId.value === id) return;
+  if (openMenuId.value !== null) {
+    openMenuAt(id, triggerEl);
+    return;
+  }
+  hoverTimer = setTimeout(() => openMenuAt(id, triggerEl), 200);
+}
+function cancelHoverMenu() {
+  clearTimeout(hoverTimer);
 }
 function closeMenu() {
   openMenuId.value = null;
@@ -81,18 +96,31 @@ const submenu = ref<SubId | null>(null);
 const submenuEl = ref<HTMLElement | null>(null);
 const submenuPos = ref({ x: 0, y: 0 });
 
+// flyouts also open on a short hover delay, cancelled when the pointer
+// moves on to a sibling item before it fires
+let subTimer: ReturnType<typeof setTimeout> | undefined;
 function openSub(id: SubId, e: MouseEvent) {
+  clearTimeout(subTimer);
   if (submenu.value === id) return;
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  submenuPos.value = { x: r.right + 4, y: r.top };
-  submenu.value = id;
+  subTimer = setTimeout(() => {
+    submenuPos.value = { x: r.right + 4, y: r.top };
+    submenu.value = id;
+  }, 150);
 }
 function toggleSub(id: SubId, e: MouseEvent) {
+  clearTimeout(subTimer);
   if (submenu.value === id) {
     submenu.value = null;
     return;
   }
-  openSub(id, e);
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  submenuPos.value = { x: r.right + 4, y: r.top };
+  submenu.value = id;
+}
+function cancelSub() {
+  clearTimeout(subTimer);
+  submenu.value = null;
 }
 
 function onDocPointer(e: MouseEvent) {
@@ -184,6 +212,7 @@ function onUpdateCheck() {
         class="menu-trigger"
         :class="{ active: openMenuId === 'file' }"
         @mouseenter="hoverMenu('file', fileBtn)"
+        @mouseleave="cancelHoverMenu"
         @click="toggleMenu('file', fileBtn)"
       >
         文件
@@ -193,6 +222,7 @@ function onUpdateCheck() {
         class="menu-trigger"
         :class="{ active: openMenuId === 'view' }"
         @mouseenter="hoverMenu('view', viewBtn)"
+        @mouseleave="cancelHoverMenu"
         @click="toggleMenu('view', viewBtn)"
       >
         视图
@@ -202,6 +232,7 @@ function onUpdateCheck() {
         class="menu-trigger"
         :class="{ active: openMenuId === 'prefs' }"
         @mouseenter="hoverMenu('prefs', prefsBtn)"
+        @mouseleave="cancelHoverMenu"
         @click="toggleMenu('prefs', prefsBtn)"
       >
         首选项
@@ -233,7 +264,7 @@ function onUpdateCheck() {
     <Teleport to="body">
       <div v-if="openMenuId === 'file'" ref="menuEl" class="recent-menu" :style="{ left: menuPos.x + 'px', top: menuPos.y + 'px' }">
         <!-- hovering a sibling item closes the flyout, like a native menu -->
-        <button class="recent-item" @click="pickFolder" @mouseenter="submenu = null">
+        <button class="recent-item" @click="pickFolder" @mouseenter="cancelSub">
           <span class="recent-icon">
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M2 4.5c0-.55.45-1 1-1h2.8l1.4 1.6H13c.55 0 1 .45 1 1V11c0 .83-.67 1.5-1.5 1.5h-9A1.5 1.5 0 0 1 2 11z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
@@ -241,7 +272,7 @@ function onUpdateCheck() {
           </span>
           <span class="recent-text"><span class="recent-name">打开项目</span></span>
         </button>
-        <button class="recent-item" @click="onClone" @mouseenter="submenu = null">
+        <button class="recent-item" @click="onClone" @mouseenter="cancelSub">
           <span class="recent-icon">
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M8 2.5v7M5 6.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -267,7 +298,7 @@ function onUpdateCheck() {
           <span class="submenu-caret">›</span>
         </button>
         <div class="ctx-sep"></div>
-        <button class="recent-item" title="编辑文件后约 1 秒自动保存" @mouseenter="submenu = null" @click.stop="settings.toggleAutoSave()">
+        <button class="recent-item" title="编辑文件后约 1 秒自动保存" @mouseenter="cancelSub" @click.stop="settings.toggleAutoSave()">
           <span class="menu-check">{{ settings.autoSave ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">自动保存</span></span>
         </button>
@@ -330,33 +361,33 @@ function onUpdateCheck() {
           <span class="submenu-caret">›</span>
         </button>
         <div class="ctx-sep"></div>
-        <div class="menu-stepper" @mouseenter="submenu = null">
+        <div class="menu-stepper" @mouseenter="cancelSub">
           <span class="stepper-label">代码字号</span>
           <button :disabled="settings.editorFontSize <= 10" @click.stop="bumpFontSize(-1)">−</button>
           <span class="stepper-val">{{ settings.editorFontSize }}px</span>
           <button :disabled="settings.editorFontSize >= 24" @click.stop="bumpFontSize(1)">＋</button>
         </div>
-        <div class="menu-stepper" @mouseenter="submenu = null">
+        <div class="menu-stepper" @mouseenter="cancelSub">
           <span class="stepper-label">代码行高</span>
           <button :disabled="settings.editorLineHeight <= 1.2" @click.stop="bumpLineHeight(-0.05)">−</button>
           <span class="stepper-val">{{ settings.editorLineHeight.toFixed(2) }}</span>
           <button :disabled="settings.editorLineHeight >= 1.8" @click.stop="bumpLineHeight(0.05)">＋</button>
         </div>
         <div class="ctx-sep"></div>
-        <button class="recent-item" @mouseenter="submenu = null" @click.stop="settings.setSideBySide(!settings.renderSideBySide)">
+        <button class="recent-item" @mouseenter="cancelSub" @click.stop="settings.setSideBySide(!settings.renderSideBySide)">
           <span class="menu-check">{{ settings.renderSideBySide ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">并排显示 diff</span></span>
         </button>
-        <button class="recent-item" @mouseenter="submenu = null" @click.stop="repo.toggleHidden()">
+        <button class="recent-item" @mouseenter="cancelSub" @click.stop="repo.toggleHidden()">
           <span class="menu-check">{{ settings.showHidden ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">显示隐藏的文件和文件夹</span></span>
         </button>
         <div class="ctx-sep"></div>
-        <button class="recent-item" @mouseenter="submenu = null" @click.stop="settings.setGlassEffect(!settings.glassEffect)">
+        <button class="recent-item" @mouseenter="cancelSub" @click.stop="settings.setGlassEffect(!settings.glassEffect)">
           <span class="menu-check">{{ settings.glassEffect ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">毛玻璃效果</span></span>
         </button>
-        <div class="menu-stepper" :class="{ disabled: !settings.glassEffect }" @mouseenter="submenu = null">
+        <div class="menu-stepper" :class="{ disabled: !settings.glassEffect }" @mouseenter="cancelSub">
           <span class="stepper-label">透明度</span>
           <button :disabled="!settings.glassEffect || 100 - settings.glassOpacity <= 25" @click.stop="bumpGlassTransparency(-5)">−</button>
           <span class="stepper-val">{{ 100 - settings.glassOpacity }}%</span>
@@ -364,16 +395,16 @@ function onUpdateCheck() {
         </div>
         <div class="ctx-sep"></div>
         <div class="menu-group-label">Pull 默认策略</div>
-        <button class="recent-item" @mouseenter="submenu = null" @click.stop="settings.setPullStrategy('merge')">
+        <button class="recent-item" @mouseenter="cancelSub" @click.stop="settings.setPullStrategy('merge')">
           <span class="menu-check">{{ settings.pullStrategy === "merge" ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">Merge（创建合并提交）</span></span>
         </button>
-        <button class="recent-item" @mouseenter="submenu = null" @click.stop="settings.setPullStrategy('rebase')">
+        <button class="recent-item" @mouseenter="cancelSub" @click.stop="settings.setPullStrategy('rebase')">
           <span class="menu-check">{{ settings.pullStrategy === "rebase" ? "✓" : "" }}</span>
           <span class="recent-text"><span class="recent-name">Rebase（历史保持线性）</span></span>
         </button>
         <div class="ctx-sep"></div>
-        <button class="recent-item" :disabled="updateState.busy" @mouseenter="submenu = null" @click="onUpdateCheck">
+        <button class="recent-item" :disabled="updateState.busy" @mouseenter="cancelSub" @click="onUpdateCheck">
           <span class="recent-icon">
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4" />
