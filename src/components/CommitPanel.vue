@@ -370,7 +370,7 @@ function startResizeMessage(e: PointerEvent) {
         <template v-if="isExpanded(i, w.repo.root)">
           <div v-if="!repo.loadingStatus && !repo.files.length" class="list-empty">工作区干净，没有未提交的更改</div>
 
-          <TransitionGroup tag="ul" name="tree">
+          <ul>
             <template v-for="row in rows">
               <li
                 v-if="row.type === 'dir'"
@@ -422,7 +422,7 @@ function startResizeMessage(e: PointerEvent) {
                 </button>
               </li>
             </template>
-          </TransitionGroup>
+          </ul>
         </template>
       </template>
 

@@ -480,7 +480,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
       <template v-if="isExpanded(i, w.repo.root)">
-        <TransitionGroup tag="ul" name="tree">
+        <ul>
           <template v-for="row in rows">
             <li
               v-if="row.type === 'dir'"
@@ -519,7 +519,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
               </button>
             </li>
           </template>
-        </TransitionGroup>
+        </ul>
         <div v-if="!rows.length" class="list-empty">此项目没有文件</div>
       </template>
     </template>
