@@ -51,7 +51,7 @@ export const useSettingsStore = defineStore("settings", {
     commitMessageHeight: 110,
     /** Git log table's Author/Date columns — Subject always flexes to fill
      * whatever's left, like IDEA's resizable log table columns */
-    logAuthorColWidth: 110,
+    logAuthorColWidth: 32,
     logDateColWidth: 130,
     /** extra, opt-in git log columns toggled from the log header's right-click menu */
     logShowHashCol: false,
@@ -86,7 +86,10 @@ export const useSettingsStore = defineStore("settings", {
         const collapsed = await persist.get<boolean>("sidebarCollapsed");
         const gitH = await persist.get<number>("gitPanelHeight");
         const commitMsgH = await persist.get<number>("commitMessageHeight");
-        const authorColW = await persist.get<number>("logAuthorColWidth");
+        // v2 key: the pre-narrowing default (110px) was persisted for anyone
+        // who ever dragged the column — abandon the old key so the new
+        // compact default actually lands, drags after this still stick
+        const authorColW = await persist.get<number>("logAuthorColWidth2");
         const dateColW = await persist.get<number>("logDateColWidth");
         const showHashCol = await persist.get<boolean>("logShowHashCol");
         const showEmailCol = await persist.get<boolean>("logShowEmailCol");
@@ -106,7 +109,7 @@ export const useSettingsStore = defineStore("settings", {
         if (typeof collapsed === "boolean") this.sidebarCollapsed = collapsed;
         if (typeof gitH === "number" && gitH >= 140 && gitH <= 800) this.gitPanelHeight = gitH;
         if (typeof commitMsgH === "number" && commitMsgH >= 50 && commitMsgH <= 600) this.commitMessageHeight = commitMsgH;
-        if (typeof authorColW === "number" && authorColW >= 60 && authorColW <= 260) this.logAuthorColWidth = authorColW;
+        if (typeof authorColW === "number" && authorColW >= 24 && authorColW <= 260) this.logAuthorColWidth = authorColW;
         if (typeof dateColW === "number" && dateColW >= 80 && dateColW <= 220) this.logDateColWidth = dateColW;
         if (typeof showHashCol === "boolean") this.logShowHashCol = showHashCol;
         if (typeof showEmailCol === "boolean") this.logShowEmailCol = showEmailCol;
@@ -205,7 +208,7 @@ export const useSettingsStore = defineStore("settings", {
       await persist.save();
     },
     async saveLogColumnWidths() {
-      await persist.set("logAuthorColWidth", this.logAuthorColWidth);
+      await persist.set("logAuthorColWidth2", this.logAuthorColWidth);
       await persist.set("logDateColWidth", this.logDateColWidth);
       await persist.save();
     },

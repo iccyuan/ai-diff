@@ -5,10 +5,11 @@ import { useRepoStore } from "../stores/repo";
 import { api, type ConsoleEntry } from "../lib/api";
 import { toast } from "../lib/toast";
 import HistoryPanel from "./HistoryPanel.vue";
+import ShelfPanel from "./ShelfPanel.vue";
 
 const settings = useSettingsStore();
 const repo = useRepoStore();
-const subTab = ref<"log" | "console">("log");
+const subTab = ref<"log" | "shelf" | "console">("log");
 
 function startResize(e: PointerEvent) {
   const startY = e.clientY;
@@ -61,6 +62,13 @@ watch(
     subTab.value = "log";
   },
 );
+// a fresh shelve targets the 搁置 view
+watch(
+  () => repo.shelfRevealSeq,
+  () => {
+    subTab.value = "shelf";
+  },
+);
 // keep an already-open console tab live: refreshWs bumps refreshSeq each time
 // it completes, an explicit "the workspace's data just changed" signal
 watch(
@@ -82,12 +90,14 @@ watch(
     <div class="git-tool-resizer" title="拖动调整高度" @pointerdown="startResize"></div>
     <div class="git-tool-tabs">
       <button :class="{ active: subTab === 'log' }" @click="subTab = 'log'">日志</button>
+      <button :class="{ active: subTab === 'shelf' }" @click="subTab = 'shelf'">搁置</button>
       <button :class="{ active: subTab === 'console' }" @click="subTab = 'console'">控制台</button>
       <div class="git-tool-tabs-spacer"></div>
       <button class="btn icon close" title="关闭 Git 面板" @click="settings.setGitPanelOpen(false)">✕</button>
     </div>
     <div class="git-tool-body">
       <HistoryPanel v-show="subTab === 'log'" />
+      <ShelfPanel v-if="subTab === 'shelf'" />
 
       <div v-show="subTab === 'console'" class="console-panel" :style="{ fontFamily: settings.editorFontFamily }">
         <div v-if="!consoleEntries.length" class="list-empty">还没有执行过 git 命令</div>

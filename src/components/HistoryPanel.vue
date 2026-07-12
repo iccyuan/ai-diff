@@ -9,7 +9,7 @@ import { resetDialog } from "../lib/resetDialog";
 import { toast } from "../lib/toast";
 import { buildCommitGraph, graphWidth, type GraphRow } from "../lib/commitGraph";
 import Spinner from "./Spinner.vue";
-import { api, type BranchInfo, type CommitInfo, type FileStatus } from "../lib/api";
+import { api, type AuthorInfo, type BranchInfo, type CommitInfo, type FileStatus } from "../lib/api";
 
 const repo = useRepoStore();
 const settings = useSettingsStore();
@@ -29,8 +29,10 @@ const filteredBranches = computed(() => {
 });
 
 /* ----- log search: debounced, searches the full history server-side
- * (not just what's been paged in) via search_commits ----- */
+ * (not just what's been paged in) via search_commits. Supports IDEA-style
+ * qualifiers (author:/subject:/hash:) with a type-ahead suggestion popup ----- */
 const searchInput = ref("");
+const searchInputEl = ref<HTMLInputElement | null>(null);
 let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 watch(searchInput, (v) => {
   clearTimeout(searchDebounce);
@@ -40,6 +42,93 @@ function clearSearch() {
   clearTimeout(searchDebounce);
   searchInput.value = "";
   repo.setLogSearchQuery(null);
+}
+
+const QUALS = [
+  { key: "author:", desc: "作者 — 后面补名称，有提示" },
+  { key: "subject:", desc: "主题 — 匹配提交主题" },
+  { key: "hash:", desc: "哈希 — 按前缀匹配" },
+];
+const suggest = ref<{ mode: "qualifier" | "author"; items: string[] } | null>(null);
+const suggestIdx = ref(0);
+
+async function updateSuggest() {
+  const el = searchInputEl.value;
+  if (!el) return;
+  const cursor = el.selectionStart ?? searchInput.value.length;
+  const before = searchInput.value.slice(0, cursor);
+  const am = /(^|\s)author:([^]*)$/i.exec(before);
+  // "author:" is the last qualifier before the cursor → suggest author names
+  if (am && !/(^|\s)(subject|hash):/i.test(am[2])) {
+    await ensureAuthors();
+    const partial = am[2].trim().toLowerCase();
+    const items = authors.value
+      .filter((a) => !partial || a.name.toLowerCase().includes(partial) || a.email.toLowerCase().includes(partial))
+      .map((a) => a.name)
+      .slice(0, 20);
+    suggest.value = items.length ? { mode: "author", items } : null;
+  } else {
+    const partial = (/([a-z]*)$/i.exec(before)?.[1] ?? "").toLowerCase();
+    const items = QUALS.filter((q) => q.key.startsWith(partial)).map((q) => q.key);
+    suggest.value = items.length ? { mode: "qualifier", items } : null;
+  }
+  suggestIdx.value = 0;
+}
+
+function applySuggest(item: string) {
+  const el = searchInputEl.value;
+  if (!el || !suggest.value) return;
+  const cursor = el.selectionStart ?? searchInput.value.length;
+  const before = searchInput.value.slice(0, cursor);
+  const after = searchInput.value.slice(cursor);
+  const mode = suggest.value.mode;
+  const newBefore =
+    mode === "author" ? before.replace(/((^|\s)author:)[^]*$/i, `$1${item} `) : before.replace(/[a-z]*$/i, item);
+  searchInput.value = newBefore + after;
+  suggest.value = null;
+  nextTick(() => {
+    el.focus();
+    el.setSelectionRange(newBefore.length, newBefore.length);
+    // picking the author qualifier immediately offers the name suggestions
+    if (mode === "qualifier" && item === "author:") updateSuggest();
+  });
+}
+
+function onSearchKeydown(e: KeyboardEvent) {
+  if (!suggest.value) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    suggestIdx.value = Math.min(suggestIdx.value + 1, suggest.value.items.length - 1);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    suggestIdx.value = Math.max(suggestIdx.value - 1, 0);
+  } else if (e.key === "Enter") {
+    const it = suggest.value.items[suggestIdx.value];
+    if (it) {
+      e.preventDefault();
+      applySuggest(it);
+    }
+  } else if (e.key === "Escape") {
+    suggest.value = null;
+  }
+}
+
+function onSearchBlur() {
+  // item clicks use @mousedown.prevent so they never blur the input; any
+  // other blur should dismiss the popup
+  suggest.value = null;
+}
+
+/* authors back the search box's `author:` name suggestions */
+const authors = ref<AuthorInfo[]>([]);
+
+async function ensureAuthors() {
+  if (authors.value.length || !repo.repo) return;
+  try {
+    authors.value = await api.listAuthors(repo.repo.root);
+  } catch {
+    authors.value = [];
+  }
 }
 
 function onBranchClick(name: string) {
@@ -249,7 +338,7 @@ async function onUndoCommit() {
   closeMenu();
   if (!c || c.parents.length !== 1) return;
   const ok = await confirmDialog(
-    "撤销上一次提交",
+    "撤销此提交",
     `确定要撤销提交「${c.subject}」吗？它的改动会变回已暂存状态，提交本身会从历史中移除。`,
   );
   if (!ok) return;
@@ -366,6 +455,17 @@ onMounted(() => {
   scrollToActiveCommit();
 });
 
+// the panel stays mounted across workspace switches (v-show) — a new active
+// project starts with an empty log that nothing would otherwise load
+watch(
+  () => repo.repo?.root,
+  () => {
+    if (!repo.ws) return;
+    if (!repo.commits.length && !repo.loadingCommits) repo.loadCommits();
+    repo.loadBranches(repo.ws);
+  },
+);
+
 onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
 </script>
 
@@ -375,7 +475,11 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
       <div class="log-branches">
         <div class="branch-toolbar">
           <input v-model="branchFilter" class="branch-filter" placeholder="筛选分支…" />
-          <button class="branch-add-btn" title="新建分支" :disabled="creatingBranch" @click="onNewBranchClick">+</button>
+          <button class="branch-add-btn" title="新建分支" :disabled="creatingBranch" @click="onNewBranchClick">
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
         <div class="branch-list">
           <div
@@ -420,20 +524,47 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
       </div>
       <div class="log-main">
         <div v-if="repo.logBranchFilter" class="log-filter-bar">
-          <span>筛选：{{ repo.logBranchFilter }}</span>
-          <button title="清除筛选" @click="repo.setLogBranchFilter(null)">✕</button>
+          <span>分支：{{ repo.logBranchFilter }}</span>
+          <button title="清除分支筛选" @click="repo.setLogBranchFilter(null)">✕</button>
         </div>
         <div class="log-content">
           <div class="log-table">
             <div class="log-search-bar">
-              <input v-model="searchInput" type="text" class="log-search-input" placeholder="搜索提交（主题 / 作者 / 哈希）…" />
+              <div class="log-search-wrap">
+                <input
+                  ref="searchInputEl"
+                  v-model="searchInput"
+                  type="text"
+                  class="log-search-input"
+                  placeholder="搜索提交，支持 author: / subject: / hash:"
+                  @focus="updateSuggest"
+                  @click="updateSuggest"
+                  @input="updateSuggest"
+                  @keydown="onSearchKeydown"
+                  @blur="onSearchBlur"
+                />
+                <div v-if="suggest" class="search-suggest">
+                  <button
+                    v-for="(it, i) in suggest.items"
+                    :key="it"
+                    :class="{ active: i === suggestIdx }"
+                    @mousedown.prevent
+                    @click="applySuggest(it)"
+                  >
+                    <span class="suggest-key">{{ it }}</span>
+                    <span v-if="suggest.mode === 'qualifier'" class="suggest-hint">
+                      {{ QUALS.find((q) => q.key === it)?.desc }}
+                    </span>
+                  </button>
+                </div>
+              </div>
               <button v-if="searchInput" title="清除搜索" @click="clearSearch">✕</button>
             </div>
             <div class="log-header" @contextmenu.prevent.stop="openColumnMenu">
               <span class="log-header-graph" :style="{ width: graphCols * LANE_W + 'px' }"></span>
               <span class="log-header-subject">主题</span>
               <span class="log-header-author" :style="{ width: settings.logAuthorColWidth + 'px' }">
-                <span class="log-col-resizer" @pointerdown="startResizeCol($event, 'logAuthorColWidth', 60, 260)"></span>
+                <span class="log-col-resizer" @pointerdown="startResizeCol($event, 'logAuthorColWidth', 24, 260)"></span>
                 作者
               </span>
               <span class="log-header-date" :style="{ width: settings.logDateColWidth + 'px' }">
@@ -564,18 +695,22 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         @contextmenu.prevent
       >
         <button @click="onCheckoutRevision">检出此提交</button>
-        <button @click="onCreateBranchFromCommit">从此创建分支…</button>
-        <button :disabled="!isCurrentHead(menu.commit)" @click="onEditCommitMessage">编辑提交消息…</button>
-        <button :disabled="menu.commit.parents.length !== 1 || !isCurrentHead(menu.commit)" @click="onUndoCommit">撤销上一次提交</button>
+        <button @click="onCreateBranchFromCommit">从此创建分支</button>
+        <button :disabled="!isCurrentHead(menu.commit)" @click="onEditCommitMessage">编辑提交消息</button>
+        <button
+          :disabled="menu.commit.parents.length !== 1 || !isCurrentHead(menu.commit)"
+          title="仅当前分支的最新提交可撤销：提交从历史移除，改动回到已暂存状态"
+          @click="onUndoCommit"
+        >撤销此提交</button>
         <div class="ctx-sep"></div>
         <button :disabled="menu.commit.parents.length > 1" @click="onCherryPick">Cherry-pick</button>
         <button :disabled="menu.commit.parents.length > 1" @click="onRevertCommit">Revert Commit</button>
         <div class="ctx-sep"></div>
-        <button @click="onResetTo">重置当前分支到这里…</button>
-        <button :disabled="menu.commit.parents.length > 1" @click="onDropCommit">丢弃此提交…</button>
+        <button @click="onResetTo">重置当前分支</button>
+        <button :disabled="menu.commit.parents.length > 1" @click="onDropCommit">丢弃此提交</button>
         <div class="ctx-sep"></div>
-        <button @click="copyText(menu.commit.hash, '提交哈希')">复制提交哈希</button>
-        <button @click="copyText(menu.commit.subject, '提交信息')">复制提交信息</button>
+        <button @click="copyText(menu.commit.hash, '提交哈希'); closeMenu()">复制提交哈希</button>
+        <button @click="copyText(menu.commit.subject, '提交信息'); closeMenu()">复制提交信息</button>
       </div>
     </Teleport>
 
@@ -588,15 +723,15 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         @click.stop
         @contextmenu.prevent
       >
-        <button class="ctx-check-item" @click="settings.toggleLogCol('hash')">
+        <button class="ctx-check-item" @click="settings.toggleLogCol('hash'); closeColumnMenu()">
           <span class="ctx-check">{{ settings.logShowHashCol ? "✓" : "" }}</span>
           提交哈希
         </button>
-        <button class="ctx-check-item" @click="settings.toggleLogCol('email')">
+        <button class="ctx-check-item" @click="settings.toggleLogCol('email'); closeColumnMenu()">
           <span class="ctx-check">{{ settings.logShowEmailCol ? "✓" : "" }}</span>
           作者邮箱
         </button>
-        <button class="ctx-check-item" @click="settings.toggleLogCol('changes')">
+        <button class="ctx-check-item" @click="settings.toggleLogCol('changes'); closeColumnMenu()">
           <span class="ctx-check">{{ settings.logShowChangesCol ? "✓" : "" }}</span>
           改动行数
         </button>
@@ -613,12 +748,12 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
         @contextmenu.prevent
       >
         <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuCheckout">检出 '{{ branchMenu.branch.name }}'</button>
-        <button @click="onBranchMenuNewFrom">从此新建分支…</button>
+        <button @click="onBranchMenuNewFrom">从此新建分支</button>
         <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuMerge">合并到当前分支</button>
         <template v-if="!branchMenu.branch.isRemote">
           <div class="ctx-sep"></div>
-          <button @click="onBranchMenuRename">重命名…</button>
-          <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuDelete">删除…</button>
+          <button @click="onBranchMenuRename">重命名</button>
+          <button :disabled="branchMenu.branch.isCurrent" @click="onBranchMenuDelete">删除</button>
         </template>
       </div>
     </Teleport>

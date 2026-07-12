@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
+import { primaryMod } from "./lib/platform";
 import AppToolbar from "./components/AppToolbar.vue";
 import ActivityBar from "./components/ActivityBar.vue";
 import ProjectPanel from "./components/ProjectPanel.vue";
@@ -73,7 +74,7 @@ function onGlobalKey(e: KeyboardEvent) {
   // any other key cancels a pending double-Shift
   if (e.key !== "Shift") lastShiftAt = 0;
 
-  if (!e.ctrlKey) return;
+  if (!primaryMod(e)) return;
   if (e.shiftKey && e.code === "KeyR") {
     e.preventDefault();
     e.stopPropagation();
@@ -129,8 +130,10 @@ async function fitWindowToScreen() {
     const sw = window.screen.availWidth;
     const sh = window.screen.availHeight;
     if (!sw || !sh) return;
-    const w = Math.max(900, Math.min(Math.round(sw * 0.8), 2200));
-    const h = Math.max(600, Math.min(Math.round(sh * 0.85), 1450));
+    // outer Math.min: a 720p laptop at 150% scaling only has ~853 logical px
+    // of width — the 900px floor must never exceed the actual screen
+    const w = Math.min(sw, Math.max(900, Math.min(Math.round(sw * 0.8), 2200)));
+    const h = Math.min(sh, Math.max(600, Math.min(Math.round(sh * 0.85), 1450)));
     const win = getCurrentWindow();
     await win.setSize(new LogicalSize(w, h));
     await win.center();

@@ -90,7 +90,7 @@ async function submit() {
         <label class="field row">
           <span class="clone-label">目标目录</span>
           <input v-model="parentDir" type="text" placeholder="选择一个父目录…" readonly />
-          <button class="btn" :disabled="busy" @click="pickParentDir">浏览…</button>
+          <button class="btn" :disabled="busy" @click="pickParentDir">浏览</button>
         </label>
 
         <label class="field">

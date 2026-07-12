@@ -13,6 +13,7 @@ import {
   type ResetMode,
 } from "../lib/api";
 import { toast, updateToast } from "../lib/toast";
+import { hasLogQuery, parseLogQuery } from "../lib/logQuery";
 import { useSettingsStore } from "./settings";
 
 let watcherHooked = false;
@@ -54,6 +55,8 @@ export interface Workspace {
   loadingCommits: boolean;
   /** when set, the 日志 view is scoped to this branch/ref instead of HEAD */
   logBranchFilter: string | null;
+  /** when set, the 日志 view only shows commits by this author */
+  logAuthorFilter: string | null;
   /** when set, the 日志 view shows search_commits matches instead of a plain
    * paginated log — cleared to go back to normal browsing */
   logSearchQuery: string | null;
@@ -87,6 +90,7 @@ function blankWorkspace(info: RepoInfo): Workspace {
     commitsExhausted: false,
     loadingCommits: false,
     logBranchFilter: null,
+    logAuthorFilter: null,
     logSearchQuery: null,
     logActiveCommit: null,
     commitFiles: {},
@@ -122,6 +126,9 @@ export const useRepoStore = defineStore("repo", {
     /** bumped by revealLogCommit — GitPanel switches to 日志 and
      * HistoryPanel scrolls the selected commit into view */
     logRevealSeq: 0,
+    /** bumped after shelving — GitPanel switches to the 搁置 tab so the
+     * fresh entry is immediately visible */
+    shelfRevealSeq: 0,
     /** sidebar view mode is global: one switch for every project */
     viewMode: "changes" as "changes" | "all",
   }),
@@ -173,6 +180,9 @@ export const useRepoStore = defineStore("repo", {
     },
     logBranchFilter(): string | null {
       return this.ws?.logBranchFilter ?? null;
+    },
+    logAuthorFilter(): string | null {
+      return this.ws?.logAuthorFilter ?? null;
     },
     logSearchQuery(): string | null {
       return this.ws?.logSearchQuery ?? null;
@@ -285,7 +295,7 @@ export const useRepoStore = defineStore("repo", {
           // re-fetch the already-loaded depth so new commits surface on top;
           // skipped until the Git panel's Log tab has loaded commits at least once
           const count = Math.max(w.commits.length, w.commitPageSize);
-          const list = await api.logCommits(w.repo.root, 0, count, w.logBranchFilter);
+          const list = await api.logCommits(w.repo.root, 0, count, w.logBranchFilter, w.logAuthorFilter);
           w.commits = list;
           w.commitsExhausted = list.length < count;
         }
@@ -518,6 +528,18 @@ export const useRepoStore = defineStore("repo", {
       }
       await this.refreshWs(w);
     },
+    /** delete files from disk — tracked ones become "deleted" changes */
+    async deleteFiles(paths: string[]) {
+      const w = this.ws;
+      if (!w || !paths.length) return;
+      try {
+        await api.deletePaths(w.repo.root, paths);
+        toast(`已删除 ${paths.length} 个文件`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
     /** revert several files in one go, refreshing only once at the end */
     async revertFiles(files: FileStatus[]) {
       const w = this.ws;
@@ -574,6 +596,67 @@ export const useRepoStore = defineStore("repo", {
       }
       await this.refreshWs(w);
     },
+    /** IDEA-style shelve: park the files' changes on the stash shelf */
+    async shelveFiles(message: string, paths: string[]) {
+      const w = this.ws;
+      if (!w || !paths.length) return;
+      try {
+        await api.stashPush(w.repo.root, message, paths);
+        toast(`已搁置 ${paths.length} 个文件的更改`);
+        // reveal the result: open the Git panel on its 搁置 tab
+        useSettingsStore().setGitPanelOpen(true);
+        this.shelfRevealSeq++;
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** unshelve: restore a shelf entry to the worktree (drops it on success) */
+    async unshelve(index: number) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.stashPop(w.repo.root, index);
+        toast("已恢复搁置的更改");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    async dropShelf(index: number) {
+      const w = this.ws;
+      if (!w) return;
+      try {
+        await api.stashDrop(w.repo.root, index);
+        toast("已删除该搁置");
+      } catch (e) {
+        toast(String(e), "error");
+      }
+    },
+    /** stage several files in one go, refreshing only once at the end */
+    async stageFiles(files: FileStatus[]) {
+      const w = this.ws;
+      if (!w || !files.length) return;
+      try {
+        for (const f of files) await api.stageFile(w.repo.root, f);
+        toast(`已暂存 ${files.length} 个文件`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
+    /** unstage several files in one go, refreshing only once at the end */
+    async unstageFiles(files: FileStatus[]) {
+      const w = this.ws;
+      if (!w || !files.length) return;
+      try {
+        for (const f of files) await api.unstageFile(w.repo.root, f);
+        toast(`已取消暂存 ${files.length} 个文件`);
+      } catch (e) {
+        toast(String(e), "error");
+      }
+      await this.refreshWs(w);
+    },
     async stageAll() {
       const w = this.ws;
       if (!w) return;
@@ -623,6 +706,21 @@ export const useRepoStore = defineStore("repo", {
       try {
         await api.createCommit(w.repo.root, message, amend);
         toast(amend ? "已修补提交" : "已提交");
+      } catch (e) {
+        toast(String(e), "error");
+        return false;
+      } finally {
+        await this.refreshWs(w);
+      }
+      return true;
+    },
+    /** IDEA-style commit: stage + commit exactly the checkbox-picked paths */
+    async commitPaths(message: string, paths: string[]): Promise<boolean> {
+      const w = this.ws;
+      if (!w) return false;
+      try {
+        await api.commitPaths(w.repo.root, message, paths);
+        toast("已提交");
       } catch (e) {
         toast(String(e), "error");
         return false;
@@ -832,6 +930,13 @@ export const useRepoStore = defineStore("repo", {
       w.logBranchFilter = branch;
       await this.loadCommits(true);
     },
+    /** scope the 日志 view to one author (or null for everyone) */
+    async setLogAuthorFilter(author: string | null) {
+      const w = this.ws;
+      if (!w || w.logAuthorFilter === author) return;
+      w.logAuthorFilter = author;
+      await this.loadCommits(true);
+    },
     /** search the full history (not just what's been paged in) by
      * subject/author/email/hash; null/empty goes back to normal browsing */
     async setLogSearchQuery(query: string | null) {
@@ -853,14 +958,24 @@ export const useRepoStore = defineStore("repo", {
       if (w.commitsExhausted) return;
       w.loadingCommits = true;
       try {
-        if (w.logSearchQuery) {
+        const parsed = parseLogQuery(w.logSearchQuery);
+        if (w.logSearchQuery && hasLogQuery(parsed)) {
           // a bounded, non-paginated set of matches — "load more" doesn't
-          // apply while a search is active
-          w.commits = await api.searchCommits(w.repo.root, w.logBranchFilter, w.logSearchQuery);
+          // apply while a search is active. author:/subject:/hash: qualifiers
+          // are parsed out of the query and matched field-specifically.
+          w.commits = await api.searchCommits(
+            w.repo.root,
+            w.logBranchFilter,
+            parsed.text,
+            200,
+            parsed.author ?? w.logAuthorFilter,
+            parsed.subject,
+            parsed.hash,
+          );
           w.commitsExhausted = true;
         } else {
           const count = w.commitPageSize;
-          const batch = await api.logCommits(w.repo.root, w.commits.length, count, w.logBranchFilter);
+          const batch = await api.logCommits(w.repo.root, w.commits.length, count, w.logBranchFilter, w.logAuthorFilter);
           w.commits.push(...batch);
           if (batch.length < count) w.commitsExhausted = true;
         }
@@ -893,8 +1008,10 @@ export const useRepoStore = defineStore("repo", {
       revealInFlight = true;
       try {
         useSettingsStore().setGitPanelOpen(true);
-        // a live search shows a bounded result set that likely excludes the hash
+        // a live search / author filter shows a bounded or scoped result set
+        // that likely excludes the hash
         if (w.logSearchQuery) await this.setLogSearchQuery(null);
+        if (w.logAuthorFilter) await this.setLogAuthorFilter(null);
         const found = () => w.commits.some((c) => c.hash === hash);
         if (!found() && !w.commitsExhausted) {
           // wait out any in-flight page load — a concurrent skip/count fetch
@@ -914,7 +1031,7 @@ export const useRepoStore = defineStore("repo", {
           if (requested > 0) {
             w.loadingCommits = true;
             try {
-              const batch = await api.logCommits(w.repo.root, w.commits.length, requested, w.logBranchFilter);
+              const batch = await api.logCommits(w.repo.root, w.commits.length, requested, w.logBranchFilter, w.logAuthorFilter);
               w.commits.push(...batch);
               if (batch.length < requested) w.commitsExhausted = true;
             } finally {

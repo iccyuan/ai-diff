@@ -10,6 +10,7 @@ import { confirmDialog } from "../lib/confirm";
 import { openFindDialog, openChooser } from "../lib/palette";
 import { api, type BlameLine, type Hunk, type ImageDiff } from "../lib/api";
 import { isVectorSource, vectorDataUrl } from "../lib/vector";
+import { primaryMod } from "../lib/platform";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
 
@@ -99,9 +100,14 @@ async function enableBlame() {
     if (!data.length) return;
     blameData = data;
     blameOn.value = true;
-    // hash + author only — with the date the gutter got too wide; full commit
-    // details live in the 日志 row a click jumps to
-    const ann = data.map((b) => (b.committed ? `${b.hash.slice(0, 6)} ${clipCols(b.author, 12)}` : "未提交"));
+    // date + author, like IDEA's annotate — the hash lives in the 日志 row a
+    // click jumps to
+    const fmtDate = (secs: number) => {
+      const d = new Date(secs * 1000);
+      const p = (n: number) => String(n).padStart(2, "0");
+      return `${p(d.getFullYear() % 100)}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
+    };
+    const ann = data.map((b) => (b.committed ? `${fmtDate(b.time)} ${clipCols(b.author, 12)}` : "未提交"));
     const width = Math.max(...ann.map(cols));
     // pad with NBSP — plain spaces collapse in the line-number DOM node
     const pad = (s: string) => s + " ".repeat(Math.max(0, width - cols(s)));
@@ -217,7 +223,7 @@ const renderedMd = computed(() => {
 const ctrlLinkClearers = new Set<() => void>();
 
 function onGlobalKeyUp(e: KeyboardEvent) {
-  if (e.key === "Control") for (const clear of ctrlLinkClearers) clear();
+  if (e.key === "Control" || e.key === "Meta") for (const clear of ctrlLinkClearers) clear();
 }
 
 /** IDEA-style jump: single hit goes straight to the location, several hits
@@ -303,7 +309,7 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
   };
   ctrlLinkClearers.add(clearLink);
   ed.onMouseMove((e) => {
-    if (!e.event.ctrlKey || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) {
+    if (!primaryMod(e.event) || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) {
       clearLink();
       return;
     }
@@ -325,7 +331,7 @@ function addEclipseActions(ed: monaco.editor.IStandaloneCodeEditor) {
   });
   ed.onMouseLeave(clearLink);
   ed.onMouseDown((e) => {
-    if (!e.event.ctrlKey || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
+    if (!primaryMod(e.event) || e.target.type !== monaco.editor.MouseTargetType.CONTENT_TEXT) return;
     const pos = e.target.position;
     const word = pos && ed.getModel()?.getWordAtPosition(pos)?.word;
     clearLink();

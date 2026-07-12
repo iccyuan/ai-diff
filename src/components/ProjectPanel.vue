@@ -8,6 +8,7 @@ import { promptDialog } from "../lib/prompt";
 import { showFileInfo } from "../lib/fileInfo";
 import { toast } from "../lib/toast";
 import { fileIcon } from "../lib/fileIcons";
+import { primaryMod } from "../lib/platform";
 import { allDirPaths, ancestorDirs, buildRows, STATUS_BADGE, type FileRow, type Row } from "../lib/fileTree";
 import Spinner from "./Spinner.vue";
 import { api, type ChangeKind, type FileStatus } from "../lib/api";
@@ -183,10 +184,9 @@ function onRowClick(row: FileRow, e: MouseEvent) {
       const [lo, hi] = a < b ? [a, b] : [b, a];
       selected.value = new Set(order.slice(lo, hi + 1));
     }
-    openRow(row);
-    return;
+    return; // selection only — don't open the file
   }
-  if (e.ctrlKey || e.metaKey) {
+  if (primaryMod(e)) {
     const s = new Set(selected.value);
     if (s.has(path)) s.delete(path);
     else s.add(path);
@@ -194,8 +194,13 @@ function onRowClick(row: FileRow, e: MouseEvent) {
     anchor = path;
     return; // toggle selection only; keep the currently-open file
   }
+  // plain click only selects/highlights — opening is the double-click's job
   selected.value = new Set([path]);
   anchor = path;
+}
+
+function onRowDblClick(row: FileRow, e: MouseEvent) {
+  if (e.shiftKey || primaryMod(e)) return;
   openRow(row);
 }
 
@@ -293,6 +298,19 @@ async function openFileInfo(path: string) {
   } catch (err) {
     toast(`无法读取文件信息：${err}`, "error");
   }
+}
+
+async function deleteTarget() {
+  const t = menu.value?.target;
+  closeMenu();
+  if (!t || t.kind === "project") return;
+  const isDir = t.kind === "dir";
+  const ok = await confirmDialog(
+    isDir ? "删除目录" : "删除文件",
+    `确定从磁盘删除${isDir ? `目录「${t.relPath}」及其中所有文件` : `文件「${t.relPath}」`}吗？已跟踪文件会变成「已删除」更改（仍可还原），未跟踪文件将直接删除、无法找回。`,
+  );
+  if (!ok) return;
+  await repo.deleteFiles([t.relPath]);
 }
 
 onMounted(() => {
@@ -462,10 +480,11 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         <button class="proj-close" title="关闭项目" @click.stop="repo.closeWorkspace(i)">✕</button>
       </div>
       <template v-if="isExpanded(i, w.repo.root)">
-        <ul>
-          <template v-for="row in rows" :key="row.type === 'dir' ? 'd:' + row.path : 'f:' + row.path">
+        <TransitionGroup tag="ul" name="tree">
+          <template v-for="row in rows">
             <li
               v-if="row.type === 'dir'"
+              :key="'d:' + row.path"
               class="dir-row"
               :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
               @click="toggleDir(row.path)"
@@ -478,9 +497,11 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
             </li>
             <li
               v-else
+              :key="'f:' + row.path"
               :class="[row.status ? 'k-' + row.status.kind : '', { active: row.path === repo.selectedPath, selected: selected.has(row.path) }]"
               :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
               @click="onRowClick(row, $event)"
+              @dblclick="onRowDblClick(row, $event)"
               @contextmenu.prevent.stop="openFileMenu(row, $event)"
             >
               <span class="ficon">
@@ -498,7 +519,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
               </button>
             </li>
           </template>
-        </ul>
+        </TransitionGroup>
         <div v-if="!rows.length" class="list-empty">此项目没有文件</div>
       </template>
     </template>
@@ -522,6 +543,10 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
         <button v-if="menu.target.kind === 'file'" @click="openFileInfo(menu.target.relPath)">查看文件信息</button>
         <button v-if="menu.target.kind !== 'file'" @click="newFile(menuDirPath()); closeMenu()">新建文件</button>
         <button v-if="menu.target.kind !== 'file'" @click="newFolder(menuDirPath()); closeMenu()">新建文件夹</button>
+        <template v-if="menu.target.kind !== 'project'">
+          <div class="ctx-sep"></div>
+          <button @click="deleteTarget()">删除</button>
+        </template>
       </div>
     </Teleport>
   </aside>

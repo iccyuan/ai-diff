@@ -179,11 +179,11 @@ function onOpenSettings() {
         <!-- hovering a sibling item closes the flyout, like a native menu -->
         <button class="recent-item" @click="pickFolder" @mouseenter="recentSubmenuOpen = false">
           <span class="recent-icon">📂</span>
-          <span class="recent-text"><span class="recent-name">打开项目…</span></span>
+          <span class="recent-text"><span class="recent-name">打开项目</span></span>
         </button>
         <button class="recent-item" @click="onClone" @mouseenter="recentSubmenuOpen = false">
           <span class="recent-icon">📥</span>
-          <span class="recent-text"><span class="recent-name">克隆仓库…</span></span>
+          <span class="recent-text"><span class="recent-name">克隆仓库</span></span>
         </button>
         <div class="ctx-sep"></div>
         <button

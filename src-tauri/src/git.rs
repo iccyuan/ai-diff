@@ -1466,6 +1466,7 @@ pub async fn log_commits(
     skip: u32,
     count: u32,
     branch: Option<String>,
+    author: Option<String>,
 ) -> Result<Vec<CommitInfo>, String> {
     let repo = PathBuf::from(repo);
     if base_ref(&repo) != "HEAD" {
@@ -1478,6 +1479,12 @@ pub async fn log_commits(
     let mut args: Vec<&str> = vec!["log"];
     if let Some(b) = &branch {
         args.push(b); // scope the log to this branch/ref instead of HEAD
+    }
+    let author_arg = author.as_ref().map(|a| format!("--author={a}"));
+    if let Some(a) = &author_arg {
+        // --fixed-strings keeps the name from being read as a regex
+        args.push("--fixed-strings");
+        args.push(a);
     }
     args.extend([
         &skip_arg,
@@ -1537,24 +1544,40 @@ pub async fn search_commits(
     branch: Option<String>,
     query: String,
     max_results: u32,
+    author: Option<String>,
+    subject: Option<String>,
+    hash: Option<String>,
 ) -> Result<Vec<CommitInfo>, String> {
     const SCAN_CAP: u32 = 10_000;
     const BATCH: u32 = 500;
     let q = query.trim().to_lowercase();
-    if q.is_empty() {
+    let author = author.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let subject = subject.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+    let hash_q = hash.map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty());
+    if q.is_empty() && author.is_none() && subject.is_none() && hash_q.is_none() {
         return Ok(Vec::new());
     }
     let mut matches = Vec::new();
     let mut skip = 0u32;
     while skip < SCAN_CAP && (matches.len() as u32) < max_results {
-        let batch = log_commits(repo.clone(), skip, BATCH, branch.clone()).await?;
+        // the author qualifier filters at the git level (--author)
+        let batch = log_commits(repo.clone(), skip, BATCH, branch.clone(), author.clone()).await?;
         let got = batch.len() as u32;
         for c in batch {
-            let hit = c.hash.to_lowercase().contains(&q)
-                || c.short_hash.to_lowercase().contains(&q)
-                || c.author.to_lowercase().contains(&q)
-                || c.email.to_lowercase().contains(&q)
-                || c.subject.to_lowercase().contains(&q);
+            let mut hit = true;
+            if let Some(s) = &subject {
+                hit &= c.subject.to_lowercase().contains(s);
+            }
+            if let Some(h) = &hash_q {
+                hit &= c.hash.to_lowercase().starts_with(h) || c.short_hash.to_lowercase().starts_with(h);
+            }
+            if !q.is_empty() {
+                hit &= c.hash.to_lowercase().contains(&q)
+                    || c.short_hash.to_lowercase().contains(&q)
+                    || c.author.to_lowercase().contains(&q)
+                    || c.email.to_lowercase().contains(&q)
+                    || c.subject.to_lowercase().contains(&q);
+            }
             if hit {
                 matches.push(c);
                 if matches.len() as u32 >= max_results {
@@ -1568,6 +1591,38 @@ pub async fn search_commits(
         skip += BATCH;
     }
     Ok(matches)
+}
+
+/// Distinct commit authors with commit counts (IDEA-style log author filter)
+#[derive(Serialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthorInfo {
+    pub name: String,
+    pub email: String,
+    pub commits: u32,
+}
+
+#[tauri::command]
+pub async fn list_authors(repo: String) -> Result<Vec<AuthorInfo>, String> {
+    let repo = PathBuf::from(repo);
+    if base_ref(&repo) != "HEAD" {
+        return Ok(Vec::new()); // empty repo
+    }
+    // "  12\tName <email>" per line, ordered by commit count descending
+    let out = run_git_text(&repo, &["shortlog", "-sne", "HEAD"])?;
+    let mut authors = Vec::new();
+    for line in out.lines() {
+        let Some((count, rest)) = line.trim().split_once('\t') else {
+            continue;
+        };
+        let commits = count.trim().parse::<u32>().unwrap_or(0);
+        let (name, email) = match rest.rsplit_once(" <") {
+            Some((n, e)) => (n.trim().to_string(), e.trim_end_matches('>').to_string()),
+            None => (rest.trim().to_string(), String::new()),
+        };
+        authors.push(AuthorInfo { name, email, commits });
+    }
+    Ok(authors)
 }
 
 /// Full commit message (subject + body) — `log_commits`' `%s` only carries the
@@ -1861,6 +1916,108 @@ pub async fn revert_file(
     Ok(())
 }
 
+/// delete the given worktree files or directories from disk. Tracked files
+/// then show up as "deleted" changes (still recoverable via revert);
+/// untracked ones are gone. Directories are removed recursively.
+#[tauri::command]
+pub async fn delete_paths(repo: String, paths: Vec<String>) -> Result<(), String> {
+    let repo = PathBuf::from(repo);
+    for path in &paths {
+        let full = repo.join(path);
+        if full.is_dir() {
+            std::fs::remove_dir_all(&full).map_err(|e| format!("删除 {path} 失败: {e}"))?;
+        } else {
+            std::fs::remove_file(&full).map_err(|e| format!("删除 {path} 失败: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// IDEA-shelve-style stash entry. `hash` is the stash commit itself (diff it
+/// against its first parent to see the shelved tracked changes); untracked
+/// files live in the third-parent commit, exposed as `untracked_hash`.
+#[derive(Serialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StashInfo {
+    pub index: u32,
+    pub message: String,
+    pub date: String,
+    pub hash: String,
+    pub untracked_hash: Option<String>,
+}
+
+#[tauri::command]
+pub async fn list_stashes(repo: String) -> Result<Vec<StashInfo>, String> {
+    let repo = PathBuf::from(repo);
+    // NB: with --date set, %gd renders stash@{<date>} instead of stash@{N},
+    // so the index comes from the line position — stash list is 0..n ordered.
+    // %P delivers the untracked-files commit (3rd parent) in the same call —
+    // a per-entry rev-parse here made the shelf feel frozen on click.
+    let out = run_git(
+        &repo,
+        &[
+            "stash",
+            "list",
+            "--date=format:%Y-%m-%d %H:%M",
+            "--format=%H%x00%P%x00%ad%x00%gs",
+        ],
+        None,
+    )?;
+    let text = String::from_utf8_lossy(&out);
+    let mut list = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let cols: Vec<&str> = line.split('\u{0}').collect();
+        if cols.len() < 4 {
+            continue;
+        }
+        list.push(StashInfo {
+            index: i as u32,
+            hash: cols[0].to_string(),
+            untracked_hash: cols[1].split(' ').nth(2).map(str::to_string),
+            date: cols[2].to_string(),
+            message: cols[3].to_string(),
+        });
+    }
+    Ok(list)
+}
+
+/// IDEA-style shelve: move the given files' worktree changes onto the stash
+/// shelf (untracked files included), leaving the rest of the worktree alone.
+#[tauri::command]
+pub async fn stash_push(repo: String, message: String, paths: Vec<String>) -> Result<(), String> {
+    let repo = PathBuf::from(repo);
+    if paths.is_empty() {
+        return Err("没有要搁置的文件".to_string());
+    }
+    let mut args: Vec<&str> = vec!["stash", "push", "--include-untracked"];
+    let msg = message.trim();
+    if !msg.is_empty() {
+        args.push("-m");
+        args.push(msg);
+    }
+    args.push("--");
+    args.extend(paths.iter().map(String::as_str));
+    run_git(&repo, &args, None)?;
+    Ok(())
+}
+
+/// unshelve: re-apply the entry to the worktree and drop it on success
+#[tauri::command]
+pub async fn stash_pop(repo: String, index: u32) -> Result<(), String> {
+    let repo = PathBuf::from(repo);
+    let r = format!("stash@{{{index}}}");
+    run_git(&repo, &["stash", "pop", &r], None)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stash_drop(repo: String, index: u32) -> Result<(), String> {
+    let repo = PathBuf::from(repo);
+    let r = format!("stash@{{{index}}}");
+    run_git(&repo, &["stash", "drop", &r], None)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn revert_hunk(repo: String, path: String, patch: String) -> Result<(), String> {
     let repo = PathBuf::from(repo);
@@ -2038,6 +2195,34 @@ pub async fn create_commit(repo: String, message: String, amend: bool) -> Result
         args.push("--amend");
     }
     run_git(&repo, &args, Some(message.as_bytes()))?;
+    Ok(())
+}
+
+/// IDEA-style commit: the UI's checkboxes only pick files, actual staging
+/// happens here at commit time. `add -A -- <paths>` stages exactly the picked
+/// paths (modifications, deletions and untracked files alike), then `--only`
+/// commits just them, leaving any other staged content in the index untouched.
+#[tauri::command]
+pub async fn commit_paths(repo: String, message: String, paths: Vec<String>) -> Result<(), String> {
+    let repo = PathBuf::from(repo);
+    if message.trim().is_empty() {
+        return Err("提交信息不能为空".to_string());
+    }
+    if paths.is_empty() {
+        return Err("没有勾选要提交的文件".to_string());
+    }
+    let mut add_args: Vec<&str> = vec!["add", "-A", "--"];
+    add_args.extend(paths.iter().map(String::as_str));
+    run_git(&repo, &add_args, None)?;
+    // git forbids partial commits mid-merge/cherry-pick/revert — commit the
+    // whole index there (that IS the resolution being concluded)
+    if detect_operation(&repo) == RepoOperation::None {
+        let mut args: Vec<&str> = vec!["commit", "-F", "-", "--only", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        run_git(&repo, &args, Some(message.as_bytes()))?;
+    } else {
+        run_git(&repo, &["commit", "-F", "-"], Some(message.as_bytes()))?;
+    }
     Ok(())
 }
 
@@ -2671,10 +2856,10 @@ mod repo_tests {
         bl(super::repo_stats(repo))
     }
     fn log_commits(repo: String, skip: u32, count: u32) -> Result<Vec<CommitInfo>, String> {
-        bl(super::log_commits(repo, skip, count, None))
+        bl(super::log_commits(repo, skip, count, None, None))
     }
     fn log_commits_on(repo: String, skip: u32, count: u32, branch: &str) -> Result<Vec<CommitInfo>, String> {
-        bl(super::log_commits(repo, skip, count, Some(branch.to_string())))
+        bl(super::log_commits(repo, skip, count, Some(branch.to_string()), None))
     }
     fn commit_files(repo: String, hash: String) -> Result<Vec<FileStatus>, String> {
         bl(super::commit_files(repo, hash))
@@ -2725,6 +2910,21 @@ mod repo_tests {
     }
     fn create_commit(repo: String, message: String, amend: bool) -> Result<(), String> {
         bl(super::create_commit(repo, message, amend))
+    }
+    fn commit_paths(repo: String, message: String, paths: Vec<String>) -> Result<(), String> {
+        bl(super::commit_paths(repo, message, paths))
+    }
+    fn list_stashes(repo: String) -> Result<Vec<StashInfo>, String> {
+        bl(super::list_stashes(repo))
+    }
+    fn stash_push(repo: String, message: String, paths: Vec<String>) -> Result<(), String> {
+        bl(super::stash_push(repo, message, paths))
+    }
+    fn stash_pop(repo: String, index: u32) -> Result<(), String> {
+        bl(super::stash_pop(repo, index))
+    }
+    fn stash_drop(repo: String, index: u32) -> Result<(), String> {
+        bl(super::stash_drop(repo, index))
     }
     fn list_branches(repo: String) -> Result<Vec<BranchInfo>, String> {
         bl(super::list_branches(repo))
@@ -2781,7 +2981,7 @@ mod repo_tests {
         bl(super::drop_commit(repo, hash))
     }
     fn search_commits(repo: String, branch: Option<String>, query: String, max_results: u32) -> Result<Vec<CommitInfo>, String> {
-        bl(super::search_commits(repo, branch, query, max_results))
+        bl(super::search_commits(repo, branch, query, max_results, None, None, None))
     }
     fn push_branch(
         repo: String,
@@ -3466,6 +3666,95 @@ mod repo_tests {
         let unstaged = get_status(r.root()).unwrap();
         assert_eq!(unstaged.len(), 2);
         assert!(unstaged.iter().all(|f| !f.staged));
+    }
+
+    #[test]
+    fn commit_paths_commits_only_picked_files() {
+        let r = TempRepo::new("commit-paths");
+        r.write("a.txt", b"base\n");
+        r.commit_all();
+        r.write("a.txt", b"changed\n");
+        r.write("b.txt", b"new file\n"); // untracked — must be added at commit time
+        r.write("c.txt", b"left out\n");
+
+        commit_paths(r.root(), "picked two".into(), vec!["a.txt".into(), "b.txt".into()]).unwrap();
+
+        let head = log_commits(r.root(), 0, 1).unwrap();
+        assert_eq!(head[0].subject, "picked two");
+        let shown = run_git_text(r.path(), &["show", "--name-only", "--pretty=format:", "HEAD"]).unwrap();
+        assert!(shown.contains("a.txt") && shown.contains("b.txt"));
+        assert!(!shown.contains("c.txt"));
+        // the unpicked file stays as an untracked working-tree change
+        let files = get_status(r.root()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "c.txt");
+        assert!(!files[0].staged);
+    }
+
+    #[test]
+    fn commit_paths_ignores_other_staged_content() {
+        let r = TempRepo::new("commit-paths-staged");
+        r.write("a.txt", b"base\n");
+        r.commit_all();
+        r.write("a.txt", b"changed\n");
+        r.write("d.txt", b"staged but unpicked\n");
+        run_git(r.path(), &["add", "d.txt"], None).unwrap();
+
+        commit_paths(r.root(), "only a".into(), vec!["a.txt".into()]).unwrap();
+
+        let shown = run_git_text(r.path(), &["show", "--name-only", "--pretty=format:", "HEAD"]).unwrap();
+        assert!(shown.contains("a.txt"));
+        assert!(!shown.contains("d.txt"), "unpicked staged file must not be committed");
+        // d.txt keeps its staged content for a later commit
+        let files = get_status(r.root()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "d.txt");
+        assert!(files[0].staged);
+    }
+
+    #[test]
+    fn shelve_unshelve_round_trip() {
+        let r = TempRepo::new("shelve");
+        r.write("a.txt", b"base\n");
+        r.commit_all();
+        r.write("a.txt", b"changed\n");
+        r.write("b.txt", b"untracked\n");
+        r.write("c.txt", b"left in worktree\n");
+
+        stash_push(r.root(), "my shelf".into(), vec!["a.txt".into(), "b.txt".into()]).unwrap();
+
+        // shelved files are gone from the worktree, the unpicked one stays
+        let files = get_status(r.root()).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "c.txt");
+        let list = list_stashes(r.root()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].message.contains("my shelf"), "got: {}", list[0].message);
+
+        stash_pop(r.root(), 0).unwrap();
+        let files = get_status(r.root()).unwrap();
+        assert_eq!(files.len(), 3, "both shelved files restored");
+        assert!(list_stashes(r.root()).unwrap().is_empty(), "pop drops the entry");
+    }
+
+    #[test]
+    fn stash_drop_discards_entry() {
+        let r = TempRepo::new("shelve-drop");
+        r.write("a.txt", b"base\n");
+        r.commit_all();
+        r.write("a.txt", b"changed\n");
+        stash_push(r.root(), "to drop".into(), vec!["a.txt".into()]).unwrap();
+        stash_drop(r.root(), 0).unwrap();
+        assert!(list_stashes(r.root()).unwrap().is_empty());
+        // dropped — the change is not restored
+        assert_eq!(get_status(r.root()).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn commit_paths_rejects_empty_selection() {
+        let r = TempRepo::new("commit-paths-empty");
+        r.write("a.txt", b"content\n");
+        assert!(commit_paths(r.root(), "msg".into(), vec![]).is_err());
     }
 
     #[test]

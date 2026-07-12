@@ -160,6 +160,12 @@ export const api = {
     }),
   revertFile: (repo: string, f: FileStatus) =>
     invoke<void>("revert_file", { repo, path: f.path, oldPath: f.oldPath, kind: f.kind }),
+  deletePaths: (repo: string, paths: string[]) => invoke<void>("delete_paths", { repo, paths }),
+  listStashes: (repo: string) => invoke<StashInfo[]>("list_stashes", { repo }),
+  stashPush: (repo: string, message: string, paths: string[]) =>
+    invoke<void>("stash_push", { repo, message, paths }),
+  stashPop: (repo: string, index: number) => invoke<void>("stash_pop", { repo, index }),
+  stashDrop: (repo: string, index: number) => invoke<void>("stash_drop", { repo, index }),
   revertHunk: (repo: string, path: string, patch: string) =>
     invoke<void>("revert_hunk", { repo, path, patch }),
   revertAll: (repo: string) => invoke<void>("revert_all", { repo }),
@@ -175,6 +181,8 @@ export const api = {
     invoke<void>("unstage_hunk", { repo, path, patch }),
   createCommit: (repo: string, message: string, amend: boolean) =>
     invoke<void>("create_commit", { repo, message, amend }),
+  commitPaths: (repo: string, message: string, paths: string[]) =>
+    invoke<void>("commit_paths", { repo, message, paths }),
   listBranches: (repo: string) => invoke<BranchInfo[]>("list_branches", { repo }),
   createBranch: (repo: string, name: string, startPoint: string | null, checkout: boolean) =>
     invoke<void>("create_branch", { repo, name, startPoint, checkout }),
@@ -216,10 +224,18 @@ export const api = {
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
   writeFile: (repo: string, path: string, content: string) => invoke<void>("write_file", { repo, path, content }),
   repoStats: (repo: string) => invoke<RepoStats>("repo_stats", { repo }),
-  logCommits: (repo: string, skip: number, count: number, branch: string | null = null) =>
-    invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch }),
-  searchCommits: (repo: string, branch: string | null, query: string, maxResults = 200) =>
-    invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults }),
+  logCommits: (repo: string, skip: number, count: number, branch: string | null = null, author: string | null = null) =>
+    invoke<CommitInfo[]>("log_commits", { repo, skip, count, branch, author }),
+  searchCommits: (
+    repo: string,
+    branch: string | null,
+    query: string,
+    maxResults = 200,
+    author: string | null = null,
+    subject: string | null = null,
+    hash: string | null = null,
+  ) => invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults, author, subject, hash }),
+  listAuthors: (repo: string) => invoke<AuthorInfo[]>("list_authors", { repo }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
   getCommitMessage: (repo: string, hash: string) => invoke<string>("get_commit_message", { repo, hash }),
   blameFile: (repo: string, path: string) => invoke<BlameLine[]>("blame_file", { repo, path }),
@@ -245,6 +261,24 @@ export interface SearchHit {
   path: string;
   line: number;
   text: string;
+}
+
+/** distinct commit author (IDEA-style log author filter) */
+export interface AuthorInfo {
+  name: string;
+  email: string;
+  commits: number;
+}
+
+/** IDEA-shelve-style stash entry; `hash` is the stash commit (diff vs its
+ * first parent = the shelved tracked changes), `untrackedHash` the commit
+ * holding shelved untracked files, when any */
+export interface StashInfo {
+  index: number;
+  message: string;
+  date: string;
+  hash: string;
+  untrackedHash: string | null;
 }
 
 /** one working-tree line's blame record (IDEA-style gutter annotate) */
