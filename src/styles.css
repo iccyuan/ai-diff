@@ -4014,65 +4014,42 @@ input[type="checkbox"]:checked::after {
   transform: translateY(8px);
 }
 
-/* ---------- UI transition effects ---------- */
+/* ---------- UI transition effects ----------
+ * deliberately restrained: quick pure-opacity fades only — movement/scale
+ * animations read as jarring in a dense desktop tool */
 
-/* expanding a folder in the file trees: revealed rows fade/slide in while
- * the rows below glide down; collapsing stays instant so it feels snappy */
+/* expanding a folder in the file trees: revealed rows fade in; collapsing
+ * and reordering stay instant so the list never wobbles */
 .tree-enter-active {
-  transition:
-    opacity 0.14s var(--ease-ui),
-    transform 0.14s var(--ease-ui);
+  transition: opacity 0.1s ease-out;
 }
 
 .tree-enter-from {
   opacity: 0;
-  transform: translateY(-4px);
 }
 
 .tree-leave-active {
   display: none;
 }
 
-.tree-move {
-  transition: transform 0.14s var(--ease-ui);
-}
-
-/* context menus / dropdown suggestions pop in like native menus */
-@keyframes ui-pop-in {
+@keyframes ui-fade-in {
   from {
     opacity: 0;
-    transform: translateY(-4px) scale(0.98);
   }
 }
 
+/* context menus / dropdown suggestions */
 .ctx-menu,
 .search-suggest,
 .recent-menu {
-  animation: ui-pop-in 0.12s var(--ease-ui);
+  animation: ui-fade-in 0.09s ease-out;
 }
 
-/* bottom Git tool window rises when opened */
-@keyframes panel-rise {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-}
-
-.git-tool-window {
-  animation: panel-rise 0.18s var(--ease-ui);
-}
-
-/* sidebar panel / git sub-tab switches cross-fade */
-@keyframes panel-fade {
-  from {
-    opacity: 0;
-  }
-}
-
+/* bottom Git tool window + panel / sub-tab switches */
+.git-tool-window,
 .project-panel,
 .commit-panel,
 .shelf-panel,
 .console-panel {
-  animation: panel-fade 0.14s var(--ease-ui);
+  animation: ui-fade-in 0.1s ease-out;
 }
