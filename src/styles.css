@@ -507,7 +507,8 @@ body {
   overflow-y: auto;
 }
 
-.recent-item:hover:not(:disabled) .recent-dir {
+.recent-item:hover:not(:disabled) .recent-dir,
+.recent-item.active .recent-dir {
   color: rgba(255, 255, 255, 0.8);
 }
 
