@@ -79,7 +79,7 @@ function hoverMenu(id: MenuId, triggerEl: HTMLElement | null) {
     openMenuAt(id, triggerEl);
     return;
   }
-  hoverTimer = setTimeout(() => openMenuAt(id, triggerEl), 200);
+  hoverTimer = setTimeout(() => openMenuAt(id, triggerEl), 400);
 }
 function cancelHoverMenu() {
   clearTimeout(hoverTimer);
@@ -106,7 +106,7 @@ function openSub(id: SubId, e: MouseEvent) {
   subTimer = setTimeout(() => {
     submenuPos.value = { x: r.right + 4, y: r.top };
     submenu.value = id;
-  }, 150);
+  }, 300);
 }
 function toggleSub(id: SubId, e: MouseEvent) {
   clearTimeout(subTimer);

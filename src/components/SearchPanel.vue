@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { palette } from "../lib/palette";
 import { useRepoStore } from "../stores/repo";
 import { api, type SearchHit } from "../lib/api";
 import { fileIcon } from "../lib/fileIcons";
+import { confirmDialog } from "../lib/confirm";
 import { toast } from "../lib/toast";
 import Spinner from "./Spinner.vue";
 
@@ -110,6 +111,43 @@ function pick(h: SearchHit) {
   repo.openAtLine(h.path, h.line);
 }
 
+/* ----- IDEA-style Replace in Files ----- */
+const replaceOpen = ref(false);
+const replaceText = ref("");
+const replacing = ref(false);
+const fileCount = computed(() => new Set(hits.value.map((h) => h.path)).size);
+
+async function doReplace(scopePath: string | null) {
+  if (!repo.repo || replacing.value) return;
+  const q = palette.find.query;
+  if (!q.trim() || !hits.value.length) return;
+  const scopeHits = scopePath ? hits.value.filter((h) => h.path === scopePath).length : hits.value.length;
+  const where = scopePath ? `文件「${scopePath}」中约 ${scopeHits} 处` : `${fileCount.value} 个文件中约 ${hits.value.length} 处`;
+  const ok = await confirmDialog(
+    "替换",
+    `确定将「${q}」替换为「${replaceText.value}」吗？将替换${where}匹配。文件的更改会出现在提交面板，可随时还原。`,
+  );
+  if (!ok) return;
+  replacing.value = true;
+  try {
+    const res = await api.replaceInFiles(
+      repo.repo.root,
+      q,
+      replaceText.value,
+      palette.find.wholeWord,
+      scopePath ? [scopePath] : null,
+    );
+    toast(`已在 ${res.files} 个文件中替换 ${res.replacements} 处`);
+    fileCache.clear();
+    await run(); // refresh the result list against the new content
+    await repo.refresh(); // changed files surface in the commit panel
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    replacing.value = false;
+  }
+}
+
 function onKey(e: KeyboardEvent) {
   if (e.key === "ArrowDown") {
     e.preventDefault();
@@ -152,10 +190,25 @@ const activeHit = () => hits.value[active.value];
             <input v-model="palette.find.wholeWord" type="checkbox" />
             全字匹配
           </label>
+          <button class="replace-toggle" :class="{ active: replaceOpen }" @click="replaceOpen = !replaceOpen">替换</button>
           <span class="find-status">
             <Spinner v-if="searching" :size="14" />
             <template v-else-if="searched">{{ hits.length }}{{ hits.length >= MAX ? "+" : "" }} 个结果</template>
           </span>
+        </div>
+        <div v-if="replaceOpen" class="find-bar replace-bar">
+          <input v-model="replaceText" placeholder="替换为" spellcheck="false" @keydown.esc="palette.find.open = false" />
+          <button
+            class="btn"
+            :disabled="replacing || !hits.length || !activeHit()"
+            :title="activeHit() ? `只替换 ${activeHit()!.path} 中的匹配` : ''"
+            @click="doReplace(activeHit()?.path ?? null)"
+          >
+            替换当前文件
+          </button>
+          <button class="btn primary" :disabled="replacing || !hits.length" @click="doReplace(null)">
+            {{ replacing ? "替换中…" : "全部替换" }}
+          </button>
         </div>
         <ul ref="listEl" class="find-list">
           <li

@@ -3387,7 +3387,9 @@ input[type="checkbox"]:checked::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  /* dialogs must layer above every other overlay (search palette 150,
+   * menus 300) — a confirm opened from those surfaces sits on top */
+  z-index: 400;
   animation: mask-in 0.15s ease;
 }
 
@@ -3751,6 +3753,38 @@ input[type="checkbox"]:checked::after {
   font-family: inherit;
   padding: 8px 12px;
   border-radius: var(--radius-md);
+}
+
+.find-bar .replace-toggle {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.find-bar .replace-toggle:hover {
+  color: var(--fg);
+}
+
+.find-bar .replace-toggle.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* the Replace-in-Files row under the search bar */
+.replace-bar {
+  padding-top: 0;
+}
+
+.replace-bar .btn {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .find-status {

@@ -110,6 +110,7 @@ pub fn run() {
             git::unstage_hunk,
             git::create_commit,
             git::commit_paths,
+            git::replace_in_files,
             git::list_branches,
             git::create_branch,
             git::checkout_branch,

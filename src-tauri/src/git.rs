@@ -895,6 +895,96 @@ pub async fn search_text(
     Ok(hits)
 }
 
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplaceResult {
+    pub files: u32,
+    pub replacements: u32,
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// whole-word replace against the ORIGINAL text (boundaries judged on the
+/// source, not the partially-built output)
+fn replace_whole_word(content: &str, query: &str, replacement: &str) -> (String, u32) {
+    let mut out = String::with_capacity(content.len());
+    let mut count = 0u32;
+    let mut i = 0;
+    while let Some(rel) = content[i..].find(query) {
+        let start = i + rel;
+        let end = start + query.len();
+        let before_ok = content[..start].chars().next_back().is_none_or(|c| !is_word_char(c));
+        let after_ok = content[end..].chars().next().is_none_or(|c| !is_word_char(c));
+        out.push_str(&content[i..start]);
+        if before_ok && after_ok {
+            out.push_str(replacement);
+            count += 1;
+        } else {
+            out.push_str(&content[start..end]);
+        }
+        i = end;
+    }
+    out.push_str(&content[i..]);
+    (out, count)
+}
+
+/// IDEA-style "Replace in Files": fixed-string replace across the worktree
+/// (scoped to `paths` when given). Candidate files come from `git grep -l`,
+/// so .gitignore'd and binary files are never touched; non-UTF-8 files are
+/// skipped rather than corrupted.
+#[tauri::command]
+pub async fn replace_in_files(
+    repo: String,
+    query: String,
+    replacement: String,
+    whole_word: bool,
+    paths: Option<Vec<String>>,
+) -> Result<ReplaceResult, String> {
+    if query.is_empty() {
+        return Err("搜索内容不能为空".to_string());
+    }
+    let repo = PathBuf::from(repo);
+    let mut args: Vec<&str> = vec!["grep", "-l", "-I", "--no-color", "--untracked", "-F"];
+    if whole_word {
+        args.push("-w");
+    }
+    args.push("-e");
+    args.push(&query);
+    let scoped: Vec<String>;
+    if let Some(p) = &paths {
+        args.push("--");
+        scoped = p.clone();
+        args.extend(scoped.iter().map(String::as_str));
+    }
+    let out = match run_git(&repo, &args, None) {
+        Ok(o) => o,
+        Err(e) if e.is_empty() => Vec::new(), // exit 1 = no matches
+        Err(e) => return Err(e),
+    };
+    let list = String::from_utf8_lossy(&out);
+    let mut files = 0u32;
+    let mut replacements = 0u32;
+    for rel in list.lines().filter(|l| !l.is_empty()) {
+        let full = repo.join(rel);
+        let Ok(bytes) = std::fs::read(&full) else { continue };
+        let Ok(content) = String::from_utf8(bytes) else { continue }; // skip non-UTF-8
+        let (next, n) = if whole_word {
+            replace_whole_word(&content, &query, &replacement)
+        } else {
+            (content.replace(&query, &replacement), content.matches(&query).count() as u32)
+        };
+        if n == 0 {
+            continue;
+        }
+        std::fs::write(&full, next).map_err(|e| format!("写入 {rel} 失败: {e}"))?;
+        files += 1;
+        replacements += n;
+    }
+    Ok(ReplaceResult { files, replacements })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageDiff {
@@ -2914,6 +3004,15 @@ mod repo_tests {
     fn commit_paths(repo: String, message: String, paths: Vec<String>) -> Result<(), String> {
         bl(super::commit_paths(repo, message, paths))
     }
+    fn replace_in_files(
+        repo: String,
+        query: String,
+        replacement: String,
+        whole_word: bool,
+        paths: Option<Vec<String>>,
+    ) -> Result<ReplaceResult, String> {
+        bl(super::replace_in_files(repo, query, replacement, whole_word, paths))
+    }
     fn list_stashes(repo: String) -> Result<Vec<StashInfo>, String> {
         bl(super::list_stashes(repo))
     }
@@ -3710,6 +3809,33 @@ mod repo_tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "d.txt");
         assert!(files[0].staged);
+    }
+
+    #[test]
+    fn replace_in_files_plain_scoped_and_whole_word() {
+        let r = TempRepo::new("replace-files");
+        r.write("a.txt", b"foo bar foobar\nfoo\n");
+        r.write("b.txt", b"foo here\n");
+        r.write("c.txt", b"no match\n");
+        r.commit_all();
+
+        // scoped to a.txt only — b.txt must stay untouched
+        let res = replace_in_files(r.root(), "foo".into(), "qux".into(), false, Some(vec!["a.txt".into()])).unwrap();
+        assert_eq!((res.files, res.replacements), (1, 3), "foo, foobar's prefix and the lone foo");
+        assert_eq!(std::fs::read(r.path().join("a.txt")).unwrap(), b"qux bar quxbar\nqux\n");
+        assert_eq!(std::fs::read(r.path().join("b.txt")).unwrap(), b"foo here\n");
+
+        // repo-wide whole-word: quxbar must NOT match qux
+        let res = replace_in_files(r.root(), "qux".into(), "foo".into(), true, None).unwrap();
+        assert_eq!((res.files, res.replacements), (1, 2));
+        assert_eq!(std::fs::read(r.path().join("a.txt")).unwrap(), b"foo bar quxbar\nfoo\n");
+    }
+
+    #[test]
+    fn replace_whole_word_boundaries() {
+        let (out, n) = replace_whole_word("cat cats concat cat_x (cat)", "cat", "dog");
+        assert_eq!(out, "dog cats concat cat_x (dog)");
+        assert_eq!(n, 2);
     }
 
     #[test]

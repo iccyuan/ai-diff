@@ -236,6 +236,8 @@ export const api = {
     hash: string | null = null,
   ) => invoke<CommitInfo[]>("search_commits", { repo, branch, query, maxResults, author, subject, hash }),
   listAuthors: (repo: string) => invoke<AuthorInfo[]>("list_authors", { repo }),
+  replaceInFiles: (repo: string, query: string, replacement: string, wholeWord: boolean, paths: string[] | null) =>
+    invoke<ReplaceResult>("replace_in_files", { repo, query, replacement, wholeWord, paths }),
   commitFiles: (repo: string, hash: string) => invoke<FileStatus[]>("commit_files", { repo, hash }),
   getCommitMessage: (repo: string, hash: string) => invoke<string>("get_commit_message", { repo, hash }),
   blameFile: (repo: string, path: string) => invoke<BlameLine[]>("blame_file", { repo, path }),
@@ -261,6 +263,12 @@ export interface SearchHit {
   path: string;
   line: number;
   text: string;
+}
+
+/** outcome of a Replace-in-Files run */
+export interface ReplaceResult {
+  files: number;
+  replacements: number;
 }
 
 /** distinct commit author (IDEA-style log author filter) */
