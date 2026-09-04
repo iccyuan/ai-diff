@@ -124,7 +124,8 @@ onBeforeUnmount(() => {
           @click="!b.isCurrent && onCheckout(b.name, false)"
         >
           <span class="branch-row-name">{{ b.name }}</span>
-          <span v-if="b.upstream" class="branch-row-track">
+          <span v-if="b.upstreamGone" class="branch-row-gone" :title="`上游 ${b.upstream} 已在远程删除`">远程已删除</span>
+          <span v-else-if="b.upstream" class="branch-row-track">
             <template v-if="b.ahead">↑{{ b.ahead }}</template>
             <template v-if="b.behind">↓{{ b.behind }}</template>
           </span>

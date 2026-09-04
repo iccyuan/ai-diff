@@ -54,10 +54,11 @@ const rows = computed<Row[]>(() => {
   const root = repo.repo?.root ?? "";
   const expanded = dirSetFor(root);
   const statusMap = new Map(repo.files.map((f) => [f.path, f]));
+  const ignored = repo.ignoredFiles;
   const knownDirs = allDirPaths(repo.allFiles);
   const extraDirs = [...pendingDirsFor(root)].filter((d) => !knownDirs.has(d));
   return buildRows(
-    repo.allFiles.map((p) => ({ path: p, status: statusMap.get(p) })),
+    repo.allFiles.map((p) => ({ path: p, status: statusMap.get(p), ignored: ignored.has(p) })),
     (p) => expanded.has(p),
     extraDirs,
   );
@@ -138,7 +139,8 @@ async function newFolder(dirPath: string) {
 // the clicked project first (mirrors BranchSwitcher's activate-then-act)
 async function fetchProject(i: number) {
   if (repo.active !== i) repo.activateWorkspace(i);
-  await repo.fetchRemote();
+  // prune so the 远程分支 list stops showing branches deleted on the remote
+  await repo.fetchRemote(null, true);
 }
 async function pullProject(i: number) {
   if (repo.active !== i) repo.activateWorkspace(i);
@@ -227,7 +229,8 @@ async function revertSelected() {
 }
 
 function fileTitle(row: FileRow): string {
-  return row.status?.oldPath ? `${row.status.oldPath} → ${row.path}` : row.path;
+  const base = row.status?.oldPath ? `${row.status.oldPath} → ${row.path}` : row.path;
+  return row.ignored ? `${base}（已被 .gitignore 忽略）` : base;
 }
 function badgeOf(kind: ChangeKind | undefined): string {
   return kind ? STATUS_BADGE[kind] : "";
@@ -498,7 +501,7 @@ function onProjPointerDown(i: number, root: string, e: PointerEvent) {
             <li
               v-else
               :key="'f:' + row.path"
-              :class="[row.status ? 'k-' + row.status.kind : '', { active: row.path === repo.selectedPath, selected: selected.has(row.path) }]"
+              :class="[row.status ? 'k-' + row.status.kind : '', { ignored: row.ignored, active: row.path === repo.selectedPath, selected: selected.has(row.path) }]"
               :style="{ paddingLeft: 10 + row.depth * INDENT + 'px' }"
               @click="onRowClick(row, $event)"
               @dblclick="onRowDblClick(row, $event)"

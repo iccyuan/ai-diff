@@ -22,12 +22,20 @@ export interface FileRow {
   name: string;
   depth: number;
   status?: FileStatus;
+  /** .gitignore'd (listed but dimmed) */
+  ignored?: boolean;
 }
 export type Row = DirRow | FileRow;
 
+interface TreeEntry {
+  path: string;
+  status?: FileStatus;
+  ignored?: boolean;
+}
+
 interface TreeNode {
   dirs: Map<string, TreeNode>;
-  files: { path: string; status?: FileStatus }[];
+  files: TreeEntry[];
 }
 
 /** Builds a collapsible dir/file tree, compacting single-child dir chains
@@ -35,7 +43,7 @@ interface TreeNode {
  * `extraDirs` seeds directories with no files yet (e.g. just-created empty
  * folders) so they still show up — git itself never tracks empty dirs. */
 export function buildRows(
-  entries: { path: string; status?: FileStatus }[],
+  entries: TreeEntry[],
   isExpanded: (dirPath: string) => boolean,
   extraDirs: string[] = [],
 ): Row[] {
@@ -83,7 +91,14 @@ export function buildRows(
       if (open) walk(child, path, depth + 1);
     }
     for (const e of [...n.files].sort((a, b) => a.path.localeCompare(b.path))) {
-      out.push({ type: "file", path: e.path, name: e.path.split("/").pop()!, depth, status: e.status });
+      out.push({
+        type: "file",
+        path: e.path,
+        name: e.path.split("/").pop()!,
+        depth,
+        status: e.status,
+        ignored: e.ignored,
+      });
     }
   };
   walk(root, "", 0);

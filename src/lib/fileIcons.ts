@@ -16,6 +16,12 @@ interface Manifest {
 
 const { fileExtensions, fileNames } = manifest as unknown as Manifest;
 
+// types the material manifest doesn't know; checked before its own table
+const EXTRA_EXTENSIONS: Record<string, string> = {
+  aidl: "android", // Android Interface Definition Language
+  hidl: "android",
+};
+
 function urlFor(iconName: string): string | undefined {
   return ICON_URLS[`/node_modules/material-icon-theme/icons/${iconName}.svg`];
 }
@@ -30,7 +36,8 @@ export function fileIcon(path: string): string {
     // "component.test.ts" -> "test.ts" -> "ts"
     const parts = name.split(".");
     for (let i = 1; i < parts.length && !icon; i++) {
-      icon = fileExtensions[parts.slice(i).join(".")];
+      const ext = parts.slice(i).join(".");
+      icon = EXTRA_EXTENSIONS[ext] ?? fileExtensions[ext];
     }
   }
   return (icon && urlFor(icon)) || FALLBACK;

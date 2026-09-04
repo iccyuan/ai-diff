@@ -666,6 +666,17 @@ body {
   color: var(--fg-muted);
 }
 
+/* local branch whose upstream was deleted on the remote */
+.branch-row-gone {
+  flex: none;
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 0 5px;
+  border-radius: 8px;
+  color: var(--st-deleted);
+  background: color-mix(in srgb, var(--st-deleted) 14%, transparent);
+}
+
 .branch-row-del {
   flex: none;
   border: none;
@@ -1923,6 +1934,18 @@ input[type="checkbox"]:checked::after {
 .file-list li.k-conflicted .path {
   color: var(--st-conflicted);
   font-weight: 600;
+}
+
+/* .gitignore'd files are listed (local.properties, .env, …) but dimmed —
+   IDEA's ignored-file colouring; status colours above still win when a
+   status class is also present, which they never are for ignored paths */
+.file-list li.ignored .path {
+  color: var(--fg-muted);
+  opacity: 0.75;
+}
+
+.file-list li.ignored .ficon img {
+  opacity: 0.55;
 }
 
 /* file-type logo with optional change-status overlay on its corner */

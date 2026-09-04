@@ -15,29 +15,70 @@ pub struct ActiveWatch {
     _watcher: RecommendedWatcher,
 }
 
+/// How a changed path matters to what we show.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    /// objects, logs, lock churn from our own git calls — noise
+    Irrelevant,
+    /// `.git/index` — also rewritten by our own read-only refreshes
+    /// (`git status` refreshes stat info), so the frontend treats an
+    /// index-only event right after its own refresh as an echo
+    Index,
+    /// HEAD / refs / worktree files — always someone else's doing
+    Other,
+}
+
 /// Inside .git only index/HEAD/refs affect what we show; everything else
 /// (objects, logs, lock churn from our own git calls) is noise.
-fn relevant(root: &Path, p: &Path) -> bool {
+fn classify(root: &Path, p: &Path) -> Change {
     let rel = match p.strip_prefix(root) {
         Ok(r) => r,
-        Err(_) => return false,
+        Err(_) => return Change::Irrelevant,
     };
     let mut comps = rel.components();
     match comps.next() {
         Some(c) if c.as_os_str() == ".git" => {
             let rest: PathBuf = comps.collect();
             let s = rest.to_string_lossy().replace('\\', "/");
-            s == "index"
-                || s == "HEAD"
+            if s == "index" {
+                Change::Index
+            } else if s == "HEAD"
                 || s == "MERGE_HEAD"
                 || s == "CHERRY_PICK_HEAD"
                 || s == "REVERT_HEAD"
                 || s == "MERGE_MSG"
                 || s.starts_with("refs/")
+            {
+                Change::Other
+            } else {
+                Change::Irrelevant
+            }
         }
-        Some(_) => true,
-        None => false,
+        Some(_) => Change::Other,
+        None => Change::Irrelevant,
     }
+}
+
+/// the strongest classification across an event's paths
+fn classify_event(root: &Path, e: &notify::Event) -> Change {
+    e.paths
+        .iter()
+        .map(|p| classify(root, p))
+        .fold(Change::Irrelevant, |acc, c| match (acc, c) {
+            (Change::Other, _) | (_, Change::Other) => Change::Other,
+            (Change::Index, _) | (_, Change::Index) => Change::Index,
+            _ => Change::Irrelevant,
+        })
+}
+
+/// `repo-changed` payload. `index_only` lets the frontend tell its own
+/// refresh's echo (only `.git/index` rewritten) from a real external change
+/// (HEAD moved, refs updated, files edited) that must never be dropped.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoChanged {
+    root: String,
+    index_only: bool,
 }
 
 fn debounce_loop(
@@ -52,15 +93,14 @@ fn debounce_loop(
             Ok(e) => e,
             Err(_) => return, // watcher dropped
         };
-        let mut pending = first
-            .ok()
-            .is_some_and(|e| e.paths.iter().any(|p| relevant(&root, p)));
+        let mut pending = first.ok().map_or(Change::Irrelevant, |e| classify_event(&root, &e));
         // coalesce until the repo has been quiet for 400ms
         loop {
             match rx.recv_timeout(Duration::from_millis(400)) {
                 Ok(Ok(e)) => {
-                    if e.paths.iter().any(|p| relevant(&root, p)) {
-                        pending = true;
+                    let c = classify_event(&root, &e);
+                    if c == Change::Other || (c == Change::Index && pending == Change::Irrelevant) {
+                        pending = c;
                     }
                 }
                 Ok(Err(_)) => {}
@@ -68,8 +108,12 @@ fn debounce_loop(
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        if pending {
-            let _ = app.emit_to(&window_label, "repo-changed", &emit_root);
+        if pending != Change::Irrelevant {
+            let payload = RepoChanged {
+                root: emit_root.clone(),
+                index_only: pending == Change::Index,
+            };
+            let _ = app.emit_to(&window_label, "repo-changed", &payload);
         }
     }
 }

@@ -229,8 +229,11 @@ function laneColor(i: number): string {
 const graphRows = computed<GraphRow[]>(() => buildCommitGraph(repo.commits));
 const graphByHash = computed(() => new Map(graphRows.value.map((r) => [r.hash, r])));
 const graphCols = computed(() => (graphRows.value.length ? graphWidth(graphRows.value) : 1));
+// a ref pill is "remote" only if it names a real remote-tracking branch —
+// local branches like feature/login contain a slash too
+const remoteRefNames = computed(() => new Set((repo.ws?.branches ?? []).filter((b) => b.isRemote).map((b) => b.name)));
 function isRemoteRef(name: string): boolean {
-  return name.includes("/");
+  return remoteRefNames.value.has(name);
 }
 
 /* ----- right-hand files panel (IDEA-style left/right split): clicking a
@@ -500,7 +503,8 @@ onBeforeUnmount(() => window.removeEventListener("resize", fitPageSize));
             @contextmenu.prevent.stop="openBranchMenu($event, b)"
           >
             <span class="branch-row-name">{{ b.name }}</span>
-            <span v-if="b.upstream" class="branch-row-track">
+            <span v-if="b.upstreamGone" class="branch-row-gone" :title="`上游 ${b.upstream} 已在远程删除`">远程已删除</span>
+            <span v-else-if="b.upstream" class="branch-row-track">
               <template v-if="b.ahead">↑{{ b.ahead }}</template>
               <template v-if="b.behind">↓{{ b.behind }}</template>
             </span>

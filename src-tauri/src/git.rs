@@ -1105,28 +1105,49 @@ pub struct FileContent {
     pub too_large: bool,
 }
 
-/// All files in the project view: tracked (incl. staged) + untracked.
-/// When `show_ignored` is false, .gitignore is respected; when true, ignored
-/// files/folders (node_modules, build output, …) are listed too. The .git
-/// directory is always skipped by git itself. NUL-separated, repo-relative
-/// forward slashes.
+#[derive(Serialize, Clone, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct FileListing {
+    /// every path shown in the project view, sorted, repo-relative
+    pub files: Vec<String>,
+    /// the subset of `files` that .gitignore excludes — the UI dims these
+    pub ignored: Vec<String>,
+}
+
+fn split_nul(out: &str) -> impl Iterator<Item = &str> {
+    out.split('\0').filter(|s| !s.is_empty())
+}
+
+/// All files in the project view: tracked (incl. staged) + untracked +
+/// gitignored. Ignored files that sit in an otherwise-tracked tree
+/// (local.properties, .env, *.iml, …) are always listed — an IDE-style project
+/// view hides nothing the user wrote — but flagged so the UI can dim them.
+/// Ignored *directories* (node_modules, build/, .gradle/ …) stay collapsed
+/// out of the listing unless `show_ignored` is set; they are bulk, not the
+/// user's files. The .git directory is always skipped by git itself.
 #[tauri::command]
-pub async fn list_files(repo: String, show_ignored: bool) -> Result<Vec<String>, String> {
+pub async fn list_files(repo: String, show_ignored: bool) -> Result<FileListing, String> {
     let repo = PathBuf::from(repo);
-    let mut args = vec!["ls-files", "--cached", "--others"];
+    let out = run_git_text(&repo, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"])?;
+    let mut files: Vec<String> = split_nul(&out).map(str::to_string).collect();
+    // --directory collapses a wholly ignored dir to one "dir/" entry, which
+    // we drop; without it every file under node_modules etc. comes back
+    let mut args = vec!["ls-files", "--others", "--ignored", "--exclude-standard"];
     if !show_ignored {
-        args.push("--exclude-standard");
+        args.push("--directory");
     }
     args.push("-z");
     let out = run_git_text(&repo, &args)?;
-    let mut files: Vec<String> = out
-        .split('\0')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
+    let mut ignored: Vec<String> = split_nul(&out)
+        .filter(|s| !s.ends_with('/'))
+        .map(str::to_string)
         .collect();
+    ignored.sort();
+    ignored.dedup();
+    files.extend(ignored.iter().cloned());
     files.sort();
     files.dedup();
-    Ok(files)
+    Ok(FileListing { files, ignored })
 }
 
 #[tauri::command]
@@ -2323,14 +2344,21 @@ pub struct BranchInfo {
     pub is_current: bool,
     pub is_remote: bool,
     pub upstream: Option<String>,
+    /// upstream is configured but its remote-tracking ref no longer exists
+    /// (the branch was deleted on the remote and pruned locally)
+    pub upstream_gone: bool,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
 }
 
 /// "[ahead 2, behind 1]" | "[ahead 2]" | "[behind 1]" | "[gone]" | ""
-fn parse_track(track: &str) -> (Option<u32>, Option<u32>) {
-    if track.is_empty() || track.contains("gone") {
-        return (None, None);
+/// -> (ahead, behind, gone)
+fn parse_track(track: &str) -> (Option<u32>, Option<u32>, bool) {
+    if track.contains("gone") {
+        return (None, None, true);
+    }
+    if track.is_empty() {
+        return (None, None, false);
     }
     let inner = track.trim_start_matches('[').trim_end_matches(']');
     let mut ahead = None;
@@ -2342,7 +2370,7 @@ fn parse_track(track: &str) -> (Option<u32>, Option<u32>) {
             behind = n.parse().ok();
         }
     }
-    (ahead, behind)
+    (ahead, behind, false)
 }
 
 /// Local + remote-tracking branches, current branch marked. Uses `\x01` as a
@@ -2381,12 +2409,13 @@ pub async fn list_branches(repo: String) -> Result<Vec<BranchInfo>, String> {
         if is_remote && name.ends_with("/HEAD") {
             continue; // symbolic ref to the remote's default branch, not a real branch
         }
-        let (ahead, behind) = parse_track(track);
+        let (ahead, behind, upstream_gone) = parse_track(track);
         branches.push(BranchInfo {
             name,
             is_current: head == "*",
             is_remote,
             upstream: if upstream.is_empty() { None } else { Some(upstream.to_string()) },
+            upstream_gone,
             ahead,
             behind,
         });
@@ -2421,12 +2450,19 @@ pub async fn create_branch(
 /// `is_remote` branches (e.g. "origin/feature-x") get a local tracking branch
 /// created (named after the part past the first `/`) rather than landing in
 /// detached HEAD, which is what a bare `git switch origin/feature-x` would do.
+/// If a local branch of that name already exists, switch to it instead —
+/// `switch -c` would fail with "branch already exists".
 #[tauri::command]
 pub async fn checkout_branch(repo: String, name: String, is_remote: bool) -> Result<(), String> {
     let repo = PathBuf::from(repo);
     if is_remote {
         let local = name.splitn(2, '/').nth(1).unwrap_or(&name);
-        run_git(&repo, &["switch", "--track", "-c", local, &name], None)?;
+        let local_ref = format!("refs/heads/{local}");
+        if run_git(&repo, &["rev-parse", "--verify", "--quiet", &local_ref], None).is_ok() {
+            run_git(&repo, &["switch", local], None)?;
+        } else {
+            run_git(&repo, &["switch", "--track", "-c", local, &name], None)?;
+        }
     } else {
         run_git(&repo, &["switch", &name], None)?;
     }
@@ -2521,7 +2557,9 @@ pub async fn fetch_remote(window: tauri::Window, repo: String, remote: Option<St
 #[tauri::command]
 pub async fn pull_branch(window: tauri::Window, repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
     let repo = PathBuf::from(repo);
-    let mut args = vec!["pull", "--progress", if rebase { "--rebase" } else { "--no-rebase" }];
+    // --prune drops remote-tracking refs for branches deleted on the remote,
+    // so the 远程分支 list doesn't keep showing branches that no longer exist
+    let mut args = vec!["pull", "--progress", "--prune", if rebase { "--rebase" } else { "--no-rebase" }];
     if let Some(r) = &remote {
         args.push(r);
     }
@@ -2934,6 +2972,9 @@ mod repo_tests {
         bl(super::get_status(repo))
     }
     fn list_files(repo: String, show_ignored: bool) -> Result<Vec<String>, String> {
+        bl(super::list_files(repo, show_ignored)).map(|l| l.files)
+    }
+    fn list_files_full(repo: String, show_ignored: bool) -> Result<FileListing, String> {
         bl(super::list_files(repo, show_ignored))
     }
     fn read_file(repo: String, path: String) -> Result<FileContent, String> {
@@ -3069,7 +3110,7 @@ mod repo_tests {
     }
     fn pull_branch(repo: String, remote: Option<String>, rebase: bool) -> Result<OpOutcome, String> {
         let repo = PathBuf::from(repo);
-        let mut args = vec!["pull", "--progress", if rebase { "--rebase" } else { "--no-rebase" }];
+        let mut args = vec!["pull", "--progress", "--prune", if rebase { "--rebase" } else { "--no-rebase" }];
         if let Some(r) = &remote {
             args.push(r);
         }
@@ -3481,22 +3522,23 @@ mod repo_tests {
         let bin: Vec<u8> = vec![0, 1, 2, 3];
         r.write("bin.dat", &bin);
 
-        let files = list_files(r.root(), false).unwrap();
+        let listing = list_files_full(r.root(), false).unwrap();
+        let files = &listing.files;
         assert!(files.contains(&"tracked.txt".to_string()));
         assert!(files.contains(&"untracked.txt".to_string()));
         assert!(files.contains(&"bin.dat".to_string()));
         assert!(
-            !files.contains(&"ignored.txt".to_string()),
-            ".gitignore'd files must not appear in the all-files view"
+            files.contains(&"ignored.txt".to_string()),
+            ".gitignore'd files in the tracked tree (local.properties style) must still be listed"
         );
+        assert_eq!(listing.ignored, vec!["ignored.txt".to_string()], "…but flagged as ignored");
+        assert!(files.is_sorted());
 
-        // show_ignored=true surfaces the .gitignore'd file too
-        let with_ignored = list_files(r.root(), true).unwrap();
-        assert!(with_ignored.contains(&"tracked.txt".to_string()));
-        assert!(
-            with_ignored.contains(&"ignored.txt".to_string()),
-            "show_ignored must reveal .gitignore'd files"
-        );
+        // show_ignored=true keeps the file and still flags it
+        let with_ignored = list_files_full(r.root(), true).unwrap();
+        assert!(with_ignored.files.contains(&"tracked.txt".to_string()));
+        assert!(with_ignored.files.contains(&"ignored.txt".to_string()));
+        assert_eq!(with_ignored.ignored, vec!["ignored.txt".to_string()]);
 
         let c = read_file(r.root(), "tracked.txt".into()).unwrap();
         assert_eq!(c.content.as_deref(), Some("hello\n"));
@@ -4237,6 +4279,84 @@ mod repo_tests {
 
         let _ = std::fs::remove_dir_all(&bare_dir);
         let _ = std::fs::remove_dir_all(&other_dir);
+    }
+
+    #[test]
+    fn list_files_hides_ignored_directories_unless_asked() {
+        let r = TempRepo::new("listing-ignored-dirs");
+        r.write(".gitignore", b"build/\nlocal.properties\n*.log\n");
+        r.write("src.txt", b"src\n");
+        r.commit_all();
+        std::fs::create_dir_all(r.path().join("build/out")).unwrap();
+        r.write("build/out/a.o", b"obj\n");
+        r.write("local.properties", b"sdk.dir=/x\n");
+        std::fs::create_dir_all(r.path().join("logs")).unwrap();
+        r.write("logs/run.log", b"log\n");
+
+        let l = list_files_full(r.root(), false).unwrap();
+        assert!(l.files.contains(&"local.properties".to_string()), "ignored file at top level shows");
+        assert!(l.files.contains(&"logs/run.log".to_string()), "ignored file in a non-ignored dir shows");
+        assert!(
+            !l.files.iter().any(|f| f.starts_with("build/")),
+            "contents of an ignored directory stay hidden: {:?}",
+            l.files
+        );
+        assert!(!l.files.iter().any(|f| f.ends_with('/')), "no bare directory entries leak through");
+        let mut ig = l.ignored.clone();
+        ig.sort();
+        assert_eq!(ig, vec!["local.properties".to_string(), "logs/run.log".to_string()]);
+
+        let all = list_files_full(r.root(), true).unwrap();
+        assert!(all.files.contains(&"build/out/a.o".to_string()), "show_ignored reveals ignored dirs' contents");
+        assert!(all.ignored.contains(&"build/out/a.o".to_string()));
+    }
+
+    #[test]
+    fn checkout_remote_branch_reuses_existing_local_branch() {
+        let (bare_dir, local, branch) = bare_remote_with_clone("checkout-remote-existing");
+        // a second local branch that also exists on the remote
+        run_git(local.path(), &["switch", "-c", "feature"], None).unwrap();
+        local.write("f.txt", b"f\n");
+        local.commit_all();
+        run_git(local.path(), &["push", "-q", "-u", "origin", "feature"], None).unwrap();
+        run_git(local.path(), &["switch", &branch], None).unwrap();
+
+        // picking "origin/feature" while local "feature" exists must not fail
+        // with "a branch named 'feature' already exists"
+        checkout_branch(local.root(), "origin/feature".to_string(), true).unwrap();
+        assert_eq!(current_branch(&local), "feature");
+        let _ = std::fs::remove_dir_all(&bare_dir);
+    }
+
+    #[test]
+    fn list_branches_flags_gone_upstream() {
+        let (bare_dir, local, _branch) = bare_remote_with_clone("gone-upstream");
+        run_git(local.path(), &["switch", "-c", "feature"], None).unwrap();
+        local.write("f.txt", b"f\n");
+        local.commit_all();
+        run_git(local.path(), &["push", "-q", "-u", "origin", "feature"], None).unwrap();
+        // delete on the remote, then prune locally — the local branch's
+        // upstream now points at nothing
+        run_git(local.path(), &["push", "-q", "origin", "--delete", "feature"], None).unwrap();
+        run_git(local.path(), &["fetch", "-q", "--prune"], None).unwrap();
+
+        let branches = list_branches(local.root()).unwrap();
+        let feature = branches.iter().find(|b| b.name == "feature" && !b.is_remote).unwrap();
+        assert!(feature.upstream_gone, "upstream deleted+pruned must be flagged: {feature:?}");
+        assert_eq!(feature.upstream.as_deref(), Some("origin/feature"));
+        assert!(
+            !branches.iter().any(|b| b.is_remote && b.name == "origin/feature"),
+            "pruned remote-tracking branch must not be listed"
+        );
+        let _ = std::fs::remove_dir_all(&bare_dir);
+    }
+
+    #[test]
+    fn parse_track_variants() {
+        assert_eq!(parse_track(""), (None, None, false));
+        assert_eq!(parse_track("[ahead 2, behind 1]"), (Some(2), Some(1), false));
+        assert_eq!(parse_track("[behind 3]"), (None, Some(3), false));
+        assert_eq!(parse_track("[gone]"), (None, None, true));
     }
 
     #[test]

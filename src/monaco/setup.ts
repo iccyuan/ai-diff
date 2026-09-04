@@ -187,6 +187,8 @@ const EXT_LANG: Record<string, string> = {
   ".svelte": "html",
   ".gradle": "java", // groovy DSL: java tokens are the closest fit
   ".groovy": "java",
+  ".aidl": "java", // Android IDL: Java-style interfaces/parcelables
+  ".hidl": "java",
   ".kts": "kotlin",
   ".toml": "ini",
   ".lock": "ini",

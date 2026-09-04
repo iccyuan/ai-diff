@@ -50,8 +50,23 @@ export interface BranchInfo {
   isCurrent: boolean;
   isRemote: boolean;
   upstream: string | null;
+  /** upstream configured but deleted on the remote (and pruned locally) */
+  upstreamGone: boolean;
   ahead: number | null;
   behind: number | null;
+}
+
+/** list_files result: every path in the project view plus the gitignored subset */
+export interface FileListing {
+  files: string[];
+  ignored: string[];
+}
+
+/** `repo-changed` watcher event; indexOnly = only .git/index was rewritten,
+ * which our own refreshes (git status) also do */
+export interface RepoChangedEvent {
+  root: string;
+  indexOnly: boolean;
 }
 
 export interface RemoteInfo {
@@ -220,7 +235,7 @@ export const api = {
   watchRepo: (repo: string) => invoke<void>("watch_repo", { repo }),
   unwatchRepo: (repo: string) => invoke<void>("unwatch_repo", { repo }),
   listFiles: (repo: string, showIgnored: boolean) =>
-    invoke<string[]>("list_files", { repo, showIgnored }),
+    invoke<FileListing>("list_files", { repo, showIgnored }),
   readFile: (repo: string, path: string) => invoke<FileContent>("read_file", { repo, path }),
   writeFile: (repo: string, path: string, content: string) => invoke<void>("write_file", { repo, path, content }),
   repoStats: (repo: string) => invoke<RepoStats>("repo_stats", { repo }),

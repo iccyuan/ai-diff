@@ -9,6 +9,7 @@ import {
   type FileStatus,
   type ForceMode,
   type Hunk,
+  type RepoChangedEvent,
   type RepoInfo,
   type ResetMode,
 } from "../lib/api";
@@ -17,8 +18,13 @@ import { hasLogQuery, parseLogQuery } from "../lib/logQuery";
 import { useSettingsStore } from "./settings";
 
 let watcherHooked = false;
-// our own refreshes touch .git/index and would echo back as watcher events
+// our own refreshes touch .git/index (git status refreshes stat info) and
+// echo back as index-only watcher events; those are dropped for this long
 let suppressAutoRefreshUntil = 0;
+// one refresh per workspace at a time; a request that lands mid-refresh runs
+// once more afterwards instead of being dropped — a commit/push that finishes
+// while we're still reading must not leave stale branch/ahead state behind
+const refreshRuns = new Map<string, { promise: Promise<void>; again: boolean }>();
 // revealLogCommit re-entry guard: rapid blame clicks must not stack loads
 let revealInFlight = false;
 
@@ -40,6 +46,8 @@ export interface Workspace {
   repo: RepoInfo;
   files: FileStatus[];
   allFiles: string[];
+  /** subset of allFiles that .gitignore excludes — shown dimmed */
+  ignoredFiles: string[];
   selectedPath: string | null;
   diff: FileDiff | null;
   content: FileContent | null;
@@ -79,6 +87,7 @@ function blankWorkspace(info: RepoInfo): Workspace {
     repo: info,
     files: [],
     allFiles: [],
+    ignoredFiles: [],
     selectedPath: null,
     diff: null,
     content: null,
@@ -144,6 +153,9 @@ export const useRepoStore = defineStore("repo", {
     },
     allFiles(): string[] {
       return this.ws?.allFiles ?? [];
+    },
+    ignoredFiles(): Set<string> {
+      return new Set(this.ws?.ignoredFiles ?? []);
     },
     mode(state): "changes" | "all" {
       return state.viewMode;
@@ -243,9 +255,14 @@ export const useRepoStore = defineStore("repo", {
         await api.watchRepo(info.root);
         if (!watcherHooked) {
           watcherHooked = true;
-          await listen<string>("repo-changed", (e) => {
-            const target = this.workspaces.find((x) => x.repo.root === e.payload);
-            if (!target || target.loadingStatus || Date.now() < suppressAutoRefreshUntil) return;
+          await listen<RepoChangedEvent>("repo-changed", (e) => {
+            const target = this.workspaces.find((x) => x.repo.root === e.payload.root);
+            if (!target) return;
+            // an index-only event during/right after our own refresh is that
+            // refresh's echo. Anything else (HEAD, refs, worktree files) is a
+            // real external change and always triggers a refresh — queued if
+            // one is in flight, never dropped
+            if (e.payload.indexOnly && (target.loadingStatus || Date.now() < suppressAutoRefreshUntil)) return;
             this.refreshWs(target);
           });
         }
@@ -281,7 +298,28 @@ export const useRepoStore = defineStore("repo", {
      * The single consistency rule: every mutation (any revert) must end here,
      * so hunk offsets are always re-derived from the current file state.
      */
-    async refreshWs(w: Workspace) {
+    async refreshWs(w: Workspace): Promise<void> {
+      const key = w.repo.root;
+      const running = refreshRuns.get(key);
+      if (running) {
+        running.again = true;
+        return running.promise;
+      }
+      const run = { again: false, promise: Promise.resolve() };
+      run.promise = (async () => {
+        try {
+          do {
+            run.again = false;
+            await this.refreshOnce(w);
+          } while (run.again);
+        } finally {
+          refreshRuns.delete(key);
+        }
+      })();
+      refreshRuns.set(key, run);
+      return run.promise;
+    },
+    async refreshOnce(w: Workspace) {
       w.loadingStatus = true;
       try {
         // re-read repo info so a branch switch (or HEAD change) reflects live
@@ -289,7 +327,7 @@ export const useRepoStore = defineStore("repo", {
         w.files = await api.getStatus(w.repo.root);
         w.branches = await api.listBranches(w.repo.root);
         if (this.viewMode === "all") {
-          w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
+          await this.loadAllFiles(w);
         }
         if (w.commits.length) {
           // re-fetch the already-loaded depth so new commits surface on top;
@@ -321,11 +359,16 @@ export const useRepoStore = defineStore("repo", {
       const active = w?.tabs.find((t) => t.id === w.activeTabId);
       if (w && active && !active.commit) await this.loadForTab(w, active);
     },
+    async loadAllFiles(w: Workspace) {
+      const listing = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
+      w.allFiles = listing.files;
+      w.ignoredFiles = listing.ignored;
+    },
     async ensureAllFiles(force = false) {
       const w = this.ws;
       if (!w || (w.allFiles.length && !force)) return;
       try {
-        w.allFiles = await api.listFiles(w.repo.root, useSettingsStore().showHidden);
+        await this.loadAllFiles(w);
       } catch (e) {
         toast(String(e), "error");
       }
@@ -335,7 +378,10 @@ export const useRepoStore = defineStore("repo", {
       const settings = useSettingsStore();
       await settings.setShowHidden(!settings.showHidden);
       // every workspace's cached list is now stale; clear so it re-fetches lazily
-      for (const w of this.workspaces) w.allFiles = [];
+      for (const w of this.workspaces) {
+        w.allFiles = [];
+        w.ignoredFiles = [];
+      }
       if (this.viewMode !== "all") this.viewMode = "all"; // make the effect visible
       await this.ensureAllFiles();
     },
